@@ -1,0 +1,28 @@
+# GEO / sequencing data
+GSE*/
+*.gz
+*.tar
+*.fastq
+*.fq
+*.bam
+*.sam
+
+# Expression matrices
+*.h5ad
+*.loom
+*.rds
+
+# Results folders
+results/
+output/
+
+# R / Python junk
+.Rhistory
+.RData
+.Rproj.user/
+__pycache__/
+*.pyc
+
+# macOS
+.DS_Store
+EOF
