@@ -46,7 +46,9 @@ getGEOSuppFiles("GSE202805")
 ```
 
 ```{r}
-counts <- read.delim(gzfile("GSE202805_genecounts_20220406.txt.gz"))
+path <- "./GSE202805/GSE202805_genecounts_20220406.txt.gz"
+
+counts <- read.delim(gzfile(path))
 
 colnames(counts) <- sub("\\.bam$", "", colnames(counts))
 
@@ -107,6 +109,10 @@ metadata
 
 ```{r}
 covid19_ds1 <- make_dds(counts = counts , metadata = metadata, ah_record = "AH89426")
+```
+
+```{r}
+saveRDS(covid19_ds1, "/Users/gbolden/Desktop/SPG2026/BIDS_project1/gse202805_covid19_ds1")
 ```
 
 ```{r}
@@ -347,6 +353,10 @@ covid19_ds2 <- make_dds(counts = final_tbl , metadata = meta_227116, ah_record =
 ```
 
 ```{r}
+saveRDS(covid19_ds2, "/Users/gbolden/Desktop/SPG2026/BIDS_project1/gse227116_covid19_ds2")
+```
+
+```{r}
 plot_total_counts(covid19_ds2)
 plot_library_complexity(covid19_ds2)
 plot_gene_detection(covid19_ds2)
@@ -412,9 +422,7 @@ meta_161731 <- meta_161731 %>%
   rename(tissue = characteristics_ch1.6) %>%
   
   # Batch (Converted to Integer)
-  mutate(characteristics_ch1.7 = gsub("batch: ", "", characteristics_ch1.7)) %>%
-  mutate(batch = as.integer(characteristics_ch1.7)) %>%
-  select(geo_accession, gender, race, cohort)
+  dplyr::select(geo_accession, gender, race, cohort)
 meta_161731
 ```
 
@@ -550,7 +558,7 @@ final_tbl_ds3 <- final_tbl_ds3 %>%
 ```{r}
 #final meta_data editing
 meta_161731$samples <- paste0(meta_161731$geo_accession, "_", meta_161731$cohort)
-meta_161731 <- meta_161731 %>% relocate(samples, .after = geo_accession) %>% select(samples, gender, race)
+meta_161731 <- meta_161731 %>% relocate(samples, .after = geo_accession) %>% dplyr::select(samples, gender, race)
 rownames(meta_161731) <- NULL
 ```
 
@@ -560,4 +568,8 @@ plot_total_counts(covid19_ds3)
 plot_library_complexity(covid19_ds3)
 plot_gene_detection(covid19_ds3)
 plot_biotypes(covid19_ds3)
+```
+
+```{r}
+saveRDS(covid19_ds3, "/Users/gbolden/Desktop/SPG2026/BIDS_project1/gse161731_covid19_ds3")
 ```
