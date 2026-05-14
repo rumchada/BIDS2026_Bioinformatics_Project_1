@@ -112,7 +112,7 @@ covid19_ds1 <- make_dds(counts = counts , metadata = metadata, ah_record = "AH89
 ```
 
 ```{r}
-saveRDS(covid19_ds1, "/Users/gbolden/Desktop/SPG2026/BIDS_project1/gse202805_covid19_ds1")
+saveRDS(covid19_ds1, "./post_processed_data/gse202805_covid19_ds1.rds")
 ```
 
 ```{r}
@@ -353,7 +353,7 @@ covid19_ds2 <- make_dds(counts = final_tbl , metadata = meta_227116, ah_record =
 ```
 
 ```{r}
-saveRDS(covid19_ds2, "/Users/gbolden/Desktop/SPG2026/BIDS_project1/gse227116_covid19_ds2")
+saveRDS(covid19_ds2, "./post_processed_data/gse227116_covid19_ds2.rds")
 ```
 
 ```{r}
@@ -571,5 +571,5 @@ plot_biotypes(covid19_ds3)
 ```
 
 ```{r}
-saveRDS(covid19_ds3, "/Users/gbolden/Desktop/SPG2026/BIDS_project1/gse161731_covid19_ds3")
+saveRDS(covid19_ds3, "./post_processed_data/gse161731_covid19_ds3.rds")
 ```

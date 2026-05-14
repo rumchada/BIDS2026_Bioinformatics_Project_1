@@ -1,0 +1,113 @@
+---
+title: "Project_1_Analysis"
+output: html_document
+---
+
+# Library Read-In
+
+```{r}
+library(tidyverse)
+library(devtools)
+library(vroom)
+library(GEOquery)
+library(biomaRt)
+library(dplyr)
+library(org.Hs.eg.db)
+library(DESeq2)
+library(clusterProfiler)
+library(RNAseqQC)
+```
+
+# Reading in the files
+
+### GSE202805 Info
+
+tissue: pbmc
+
+**80 Samples:**
+
+**Platform:** Illumina HiSeq 4000 (Homo sapiens)
+
+**Case Groups:** 4 acute-Mild, 6 Acute Moderate, 32 Acute-Severe, 28 Covalescent
+
+**Control Groups:** 10 healthy controls
+
+### **GSE227116 Info**
+
+tissue: pbmc
+
+65 blood Samples recoved form 46 COVID-19 convalescent patients and 10 healthy donors were analyzed by RNA- Sequencing
+
+**Platform:** Illumina HiSeq 2500 (Homo sapiens)
+
+10 healthy donors, 65 blood samples.
+
+### GSE161731 Info
+
+tissue: pbmc
+
+Illumina NovaSeq 6000 (Homo sapiens)
+
+46 individuals with PCR positive, sympomatic COVID-19, 14 were sampled at multiple time points
+
+(early ≤10 days, middle 11-21 days, late \>21 days)
+
+**Categorical severity of Healthy and COVID-19 patients**
+
+59 = acute respiratory infection
+
+17 = Influenza
+
+20 = bacterial pneumonia
+
+19 = healthy controls
+
+```{r}
+covid19_ds1 <- readRDS("./post_processed_data/gse202805_covid19_ds1.rds")
+covid19_ds2 <- readRDS("./post_processed_data/gse227116_covid19_ds2.rds")
+covid19_ds3 <- readRDS("./post_processed_data/gse161731_covid19_ds3.rds")
+```
+
+#### QC Plots on raw count matrix
+
+typing a qc function plain without arguments gives you the actual ggplot 2 function: neat
+
+**Library Size:** the total number of counts for each sample
+
+Ideally we should see a level distribution between each of samples within the same level of magnitude.
+
+## Library Size
+
+Size distribution is typical and normal for all three. However DS2 and DS3 are right skewed with out of range samples. Outlier samples that exceed the magnitude of the second IQR can indicate that there was PCR Over amplification and too many duplicate reads. If we samples low, then those have low counts. Then those have around 5 to 10 million reads and are usually excluded. DS3 has a few, but overall all three dataset should that there that most the samples are within range to avoid batch effects.
+
+```{r}
+plot_total_counts(covid19_ds1) +
+  labs(title = "gse202805 / COVID-19 DS1 library sizes") 
+  
+  
+plot_total_counts(covid19_ds2) + 
+  labs(title = "gse227116 / COVID-19 DS2 library sizes")
+plot_total_counts(covid19_ds3) + 
+  labs(title = "gse161731 / COVID-19 DS3 library sizes")
+```
+
+## Library Complexity
+
+Library Complexity: the fraction of counts that are taken up by what fraction of genes.
+
+This helps us to assess transcriptional diversity. Ideally, a high quality library should have read distributed across a broad range of gene rather than being dominated by a select few
+
+```{r}
+
+```
+
+```{r}
+plot_library_complexity(covid19_ds1) +
+  labs(title = "gse202805 / COVID-19 DS1 library complexity") 
+  
+plot_library_complexity(covid19_ds2) + 
+  labs(title = "gse227116 / COVID-19 DS2 library complexity")
+
+plot_library_complexity(covid19_ds3) + 
+  labs(title = "gse161731 / COVID-19 DS3 library complexity")
+```
