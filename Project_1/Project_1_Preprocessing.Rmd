@@ -80,7 +80,7 @@ colnames(counts) <- gsub(" ", "", colnames(counts))
 # MetaData construction
 metadata <- data.frame(
   sample = colnames(counts),
-  treatment = dplyr::case_when(
+  condition = dplyr::case_when(
     grepl("_acute$", colnames(counts)) ~ "acute",
     grepl("_convalescent$", colnames(counts)) ~ "convalescent",
     grepl("healthy$", colnames(counts)) ~ "healthy",
@@ -108,7 +108,16 @@ metadata
 ```
 
 ```{r}
+# Unflitered Counts Saved to a DeSeqDataSet (dds object)
 covid19_ds1 <- make_dds(counts = counts , metadata = metadata, ah_record = "AH89426")
+#renaming counts to raw counts
+assayNames(covid19_ds1)[1] <- "counts"
+#variance stabilized Raw counts
+assays(covid19_ds1)[[2]] <- vst(covid19_ds1@assays@data$counts)
+assayNames(covid19_ds1)[2] <- "var_stable"
+#log_transformed (log normalized counts)
+assays(covid19_ds1)[[3]] <- log10(covid19_ds1@assays@data$counts + 1)
+assayNames(covid19_ds1)[3] <- "log_counts"
 ```
 
 ```{r}
@@ -119,15 +128,15 @@ saveRDS(covid19_ds1, "./post_processed_data/gse202805_covid19_ds1.rds")
 plot_total_counts(covid19_ds1)
 plot_library_complexity(covid19_ds1)
 plot_gene_detection(covid19_ds1)
-plot_biotypes(covid19_ds1)
 ```
 
-Variance Stabilization
+```{r}
+head(rowData(covid19_ds1))
+```
 
 ```{r}
-mean_sd_plot(covid19_ds1)
-vsd_ds1 <- vst(covid19_ds1)
-mean_sd_plot(vsd_ds1)
+plot_biotypes
+plot_biotypes(covid19_ds1)
 ```
 
 Filtering out low count Genes
@@ -349,7 +358,16 @@ meta_227116 <- meta_227116 %>% dplyr::select(-c(title))
 ```
 
 ```{r}
+# Unflitered Counts Saved to a DeSeqDataSet (dds object)
 covid19_ds2 <- make_dds(counts = final_tbl , metadata = meta_227116, ah_record = "AH89426")
+#renaming counts to raw counts
+assayNames(covid19_ds2)[1] <- "counts"
+#variance stabilized Raw counts
+assays(covid19_ds2)[[2]] <- vst(covid19_ds2@assays@data$counts)
+assayNames(covid19_ds2)[2] <- "var_stable"
+#log_transformed (log normalized counts)
+assays(covid19_ds2)[[3]] <- log10(covid19_ds2@assays@data$counts + 1)
+assayNames(covid19_ds2)[3] <- "log_counts"
 ```
 
 ```{r}
@@ -563,11 +581,16 @@ rownames(meta_161731) <- NULL
 ```
 
 ```{r}
+# Unflitered Counts Saved to a DeSeqDataSet (dds object)
 covid19_ds3 <- make_dds(counts = final_tbl_ds3 , metadata = meta_161731, ah_record = "AH89426")
-plot_total_counts(covid19_ds3)
-plot_library_complexity(covid19_ds3)
-plot_gene_detection(covid19_ds3)
-plot_biotypes(covid19_ds3)
+#renaming counts to raw counts
+assayNames(covid19_ds3)[1] <- "counts"
+#variance stabilized Raw counts
+assays(covid19_ds3)[[2]] <- vst(covid19_ds3@assays@data$counts)
+assayNames(covid19_ds3)[2] <- "var_stable"
+#log_transformed (log normalized counts)
+assays(covid19_ds3)[[3]] <- log10(covid19_ds3@assays@data$counts + 1)
+assayNames(covid19_ds3)[3] <- "log_counts"
 ```
 
 ```{r}

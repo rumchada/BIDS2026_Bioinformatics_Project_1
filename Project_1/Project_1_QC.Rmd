@@ -97,9 +97,13 @@ Library Complexity: the fraction of counts that are taken up by what fraction of
 
 This helps us to assess transcriptional diversity. Ideally, a high quality library should have read distributed across a broad range of gene rather than being dominated by a select few
 
-```{r}
+GSE20285:
 
-```
+Starting with major outlier on the left, this shows us that 50% of counts within that sample contains less than 0.01.% of the genes within the homo-sapien reference genome used fro alignment. This what is known as low complexity sample/library. This would mean that very little known genes probably around 100 out of thousands are being seen within the total amounts of reads within that sample.
+
+Our main cluster of libraries: Looks like we have a healthy amount of healthy amount of variation across all libraries. For almost all of the samples, 50% of the counts account for the first 10% of the reads and flatten out around the 50% of genes at 95% of the counts within the majority of the libraries.
+
+A general rule for grading library complexity is to find the intersection at 50% of the reads counted.
 
 ```{r}
 plot_library_complexity(covid19_ds1) +
@@ -110,4 +114,63 @@ plot_library_complexity(covid19_ds2) +
 
 plot_library_complexity(covid19_ds3) + 
   labs(title = "gse161731 / COVID-19 DS3 library complexity")
+```
+
+**Library complexity is only one component of sequencing saturation. It is also dependent on the sequencing depth: the total number of reads the machine produced per sample**
+
+This is different from **sequencing saturation:** the measure of the fraction of library complexity that was sequenced in a given experiment.
+
+Low Saturation: You have unique molecules in your sample that sequencer hasn't yet seen. Adding more reads will increase the number of genes you detect
+
+High Saturation: You have already sequenced almost ever molecule in the library multiple time. Adding more reads will only produce duplicates
+
+Your Saturation limit can also vary depending on the cell types you're profiling (<https://kb.10xgenomics.com/s/article/115005062366-What-is-sequencing-saturation>)
+
+## **Gene Detection**
+
+```{r}
+plot_gene_detection
+plot_gene_detection(covid19_ds1) +
+  labs(title = "gse202805 / COVID-19 DS1 gene detection") 
+  
+plot_gene_detection(covid19_ds2) + 
+  labs(title = "gse227116 / COVID-19 DS2 gene detection")
+
+plot_gene_detection(covid19_ds3) + 
+  labs(title = "gse161731 / COVID-19 DS3 gene detection")
+```
+
+## **Clustering Using Internal DDS functions**
+
+Euclidean Distance
+
+```{r}
+assays(covid19_ds1) <- assays(covid19_ds1)[c("var_stable", "counts", "log_counts")]
+```
+
+```{r}
+plot_sample_clustering(covid19_ds1, anno_vars = c("condition"), distance = "euclidean")
+```
+
+Plotting the First 2 PCs
+
+```{r}
+plot_pca(covid19_ds1, PC_x = 1, PC_y = 2, color_by = "condition")
+```
+
+**Skree Plot to tell which PC Captures the most variability between between each sample**
+
+```{r}
+
+vst_mat <- assay(covid19_ds1, "var_stable")
+top_var_genes <- he
+```
+
+## Plotting PC loadings:
+
+**Which of the genes are considered drivers of variability within each sample ?**
+
+```{r}
+pca_res <- plot_pca(covid19_ds1, PC_x = 1, PC_y = 2, color_by = "condition", show_plot = FALSE)
+plot_loadings(pca_res, PC = 1, annotate_top_n = 5)
 ```
