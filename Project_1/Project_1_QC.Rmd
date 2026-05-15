@@ -223,8 +223,12 @@ plot_loadings(pca_res, PC = 1, annotate_top_n = 5)
 Input the Left Unitary \* Singular Values
 
 ```{r}
+dim(t(assay(covid19_ds2, "var_stable")))
+```
+
+```{r}
 # 1. Run PCA
-pca_res <- prcomp(t(assay(covid19_ds2, "var_stable")), rank. = 50)
+pca_res <- prcomp(t(assay(covid19_ds1, "var_stable")), rank. = 50)
 
 # 2. Use the 'x' slot (the PC scores) as input for UMAP
 # We only take the number of PCs identified by your scree plot (e.g., 1:15)
@@ -238,8 +242,16 @@ umap_df <- data.frame(
    UMAP_2 = umap_out$layout[, 2],
    Condition = as.factor(colData(covid19_ds1)$condition))
 
+ggplot(umap_df, aes(x = UMAP_1, y = UMAP_2, color = Condition)) +
+  geom_point(size = 3) +
+  theme_minimal() +
+  labs(title = "UMAP of COVID-19 Samples", subtitle = "Input: Top 15 PCs from VST Data")
 ```
 
 ```{r}
 length(colData(covid19_ds1)$condition)
+```
+
+```{r}
+length(covid19_ds1$condition)
 ```
