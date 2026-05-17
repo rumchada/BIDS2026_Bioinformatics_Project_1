@@ -247,11 +247,3 @@ ggplot(umap_df, aes(x = UMAP_1, y = UMAP_2, color = Condition)) +
   theme_minimal() +
   labs(title = "UMAP of COVID-19 Samples", subtitle = "Input: Top 15 PCs from VST Data")
 ```
-
-```{r}
-length(colData(covid19_ds1)$condition)
-```
-
-```{r}
-length(covid19_ds1$condition)
-```
