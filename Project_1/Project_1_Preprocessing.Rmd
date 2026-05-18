@@ -56,6 +56,7 @@ counts <- counts %>% dplyr::select(-c(Chr, Start, End, Strand, Length))
 
 
 meta_data <- meta_202805
+meta_data
 meta_data <- meta_data %>%
   rownames_to_column(var = "samples") %>%
   dplyr::select(samples, title, characteristics_ch1) %>%
@@ -112,6 +113,7 @@ metadata
 covid19_ds1 <- make_dds(counts = counts , metadata = metadata, ah_record = "AH89426")
 #renaming counts to raw counts
 assayNames(covid19_ds1)[1] <- "counts"
+
 #variance stabilized Raw counts
 assays(covid19_ds1)[[2]] <- vst(covid19_ds1@assays@data$counts)
 assayNames(covid19_ds1)[2] <- "var_stable"
@@ -362,12 +364,17 @@ meta_227116 <- meta_227116 %>% dplyr::select(-c(title))
 covid19_ds2 <- make_dds(counts = final_tbl , metadata = meta_227116, ah_record = "AH89426")
 #renaming counts to raw counts
 assayNames(covid19_ds2)[1] <- "counts"
+
 #variance stabilized Raw counts
 assays(covid19_ds2)[[2]] <- vst(covid19_ds2@assays@data$counts)
 assayNames(covid19_ds2)[2] <- "var_stable"
 #log_transformed (log normalized counts)
 assays(covid19_ds2)[[3]] <- log10(covid19_ds2@assays@data$counts + 1)
 assayNames(covid19_ds2)[3] <- "log_counts"
+```
+
+```{r}
+dims(covid19_ds2@assays@data$counts)
 ```
 
 ```{r}
@@ -412,7 +419,21 @@ head(meta_161731)
 getGEOSuppFiles("GSE161731")
 ```
 
-### Aesthetic mapping of metadata
+```{r}
+urld_ds3 <- "https://www.ncbi.nlm.nih.gov/geo/download/?format=file&type=rnaseq_counts"
+path_ds3 <- paste(urld_ds3, "acc=GSE161731", "file=GSE161731_raw_counts_GRCh38.p13_NCBI.tsv.gz", sep="&");
+tbl_ds3 <- as.data.frame(as.matrix(data.table::fread(path_ds3, header=T, colClasses="integer"), rownames=1))
+```
+
+```{r}
+View(meta_161731)
+```
+
+Pre-Cleaning Meta.Data
+
+|     |
+|:----|
+|     |
 
 ```{r}
 meta_161731 <- meta_161731 %>%
@@ -439,18 +460,12 @@ meta_161731 <- meta_161731 %>%
   mutate(characteristics_ch1.6 = gsub("tissue: ", "", characteristics_ch1.6)) %>%
   rename(tissue = characteristics_ch1.6) %>%
   
+  mutate(characteristics_ch1.8 = gsub("batch: ", "", characteristics_ch1.8)) %>%
+  rename(batch_num = characteristics_ch1.8)
+  
   # Batch (Converted to Integer)
-  dplyr::select(geo_accession, gender, race, cohort)
+  dplyr::select(geo_accession, gender, race, cohort, batch)
 meta_161731
-```
-
-```{r}
-urld_ds3 <- "https://www.ncbi.nlm.nih.gov/geo/download/?format=file&type=rnaseq_counts"
-path_ds3 <- paste(urld_ds3, "acc=GSE161731", "file=GSE161731_raw_counts_GRCh38.p13_NCBI.tsv.gz", sep="&");
-tbl_ds3 <- as.data.frame(as.matrix(data.table::fread(path_ds3, header=T, colClasses="integer"), rownames=1))
-
-
-
 ```
 
 ### Mapping Sample Name to Condition
@@ -459,14 +474,10 @@ tbl_ds3 <- as.data.frame(as.matrix(data.table::fread(path_ds3, header=T, colClas
 #Mapping sample to the Condition
 mapping <- c(meta_161731$cohort)
 names(mapping) <- meta_161731$geo_accession
-
-column_conditions <- mapping[colnames(tbl_ds3)]
-
-new_names <- paste(colnames(tbl_ds3), column_conditions, sep = "_")
-
+new_names <- paste(colnames(tbl_ds3), mapping, sep = "_")
 colnames(tbl_ds3) <- new_names
-
 tbl_ds3 <- rownames_to_column(tbl_ds3, "geneid")
+tbl_ds3
 ```
 
 ```{r}
@@ -576,8 +587,17 @@ final_tbl_ds3 <- final_tbl_ds3 %>%
 ```{r}
 #final meta_data editing
 meta_161731$samples <- paste0(meta_161731$geo_accession, "_", meta_161731$cohort)
-meta_161731 <- meta_161731 %>% relocate(samples, .after = geo_accession) %>% dplyr::select(samples, gender, race)
+meta_161731 <- meta_161731 %>% 
+  relocate(samples, .after = geo_accession) %>% 
+  dplyr::select(samples, gender, race) %>%
+  separate(samples, 
+           into = c("sample_id", "condition"),
+           sep = "_")
 rownames(meta_161731) <- NULL
+```
+
+```{r}
+meta_161731
 ```
 
 ```{r}
@@ -585,9 +605,11 @@ rownames(meta_161731) <- NULL
 covid19_ds3 <- make_dds(counts = final_tbl_ds3 , metadata = meta_161731, ah_record = "AH89426")
 #renaming counts to raw counts
 assayNames(covid19_ds3)[1] <- "counts"
+
 #variance stabilized Raw counts
 assays(covid19_ds3)[[2]] <- vst(covid19_ds3@assays@data$counts)
 assayNames(covid19_ds3)[2] <- "var_stable"
+
 #log_transformed (log normalized counts)
 assays(covid19_ds3)[[3]] <- log10(covid19_ds3@assays@data$counts + 1)
 assayNames(covid19_ds3)[3] <- "log_counts"
