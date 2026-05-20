@@ -5,7 +5,7 @@ output: html_document
 
 Source Challenge: <https://github.com/mitreac/BIDS2026_projects>
 
-```{r}
+```{r, include = FALSE}
 library(tidyverse)
 library(devtools)
 library(GEOquery)
@@ -156,7 +156,7 @@ Platform: Illumina HiSeq 2500 (Homo sapiens)
 10 healthd donors, 65 blood samples.
 
 ```{r}
-gse_227116 <- getGEO("GSE227116", GSEMatrix = TRUE)
+gse_227116 <- getGEO("GSE152641", GSEMatrix = TRUE)
 gse_227116 <- gse_227116[[1]]
 
 expr_227116 <- exprs(gse_227116)
@@ -165,7 +165,7 @@ meta_227116 <- pData(gse_227116)
 head(expr_227116)
 head(meta_227116)
 
-getGEOSuppFiles("GSE227116")
+getGEOSuppFiles("GSE152641")
 ```
 
 ```{r}
@@ -173,50 +173,67 @@ meta_227116
 ```
 
 ```{r}
-urld <- "https://www.ncbi.nlm.nih.gov/geo/download/?format=file&type=rnaseq_counts"
-path <- paste(urld, "acc=GSE227116", "file=GSE227116_raw_counts_GRCh38.p13_NCBI.tsv.gz", sep="&");
-tbl <- as.matrix(data.table::fread(path, header=T, colClasses="integer"), rownames=1) %>% as.data.frame()
-tbl
+library(glue)
+warned <- FALSE
+acc_num <- "GSE152641"
+
+url_ds2 <- "https://www.ncbi.nlm.nih.gov/geo/download/?format=file&type=rnaseq_counts"
+path_ds2 <- paste(url_ds2, glue("acc={acc_num}"), glue("file={acc_num}_raw_counts_GRCh38.p13_NCBI.tsv.gz"), sep="&");
+
+
+
+tbl_ds2 <- tryCatch(
+
+  {
+    as.matrix(data.table::fread(path_ds2, header=T, colClasses="integer"), rownames=1) %>% as.data.frame()
+  },
+
+  warning = function(w){
+
+    message("Initial call unsuccessful. Using local GEO file.")
+
+    path_ds2 <- list.files(acc_num,recursive = TRUE,full.names = TRUE)[1]
+
+    as.matrix(data.table::fread(path_ds2, header=T, colClasses="integer"), rownames=1) %>% as.data.frame()
+  }
+
+)
 ```
 
 ```{r}
-
-# Cleaning the Text and shuffling columns around
-meta_227116$samples <- row.names(meta_227116)
-
-rownames(meta_227116) <- NULL
-
-names(meta_227116)[colnames(meta_227116) == "characteristics_ch1"] <- 'condition'
-
+# cleaning the meta_data
 meta_227116 <- meta_227116 %>%
-  dplyr::select(samples, condition, title) %>%
-  dplyr::mutate(condition = gsub("^status: ", "", condition))
-
-
-meta_227116 <- meta_227116 %>% 
-            dplyr::mutate(condition = gsub("COVID-19", "", condition)) %>% 
+            rename("condition" = "disease:ch1") %>%
+            dplyr::mutate(condition = gsub("control", "", condition)) %>% 
             dplyr::mutate(condition = trimws(condition)) %>%
-            dplyr::mutate(condition = gsub("s$","", condition))
+            dplyr::mutate(condition = gsub("s$","", condition)) %>%
+            dplyr::select(geo_accession,
+                          "age:ch1", 
+                          condition, 
+                          "Sex:ch1")
+
+colnames(meta_227116) <- sub(":.*", "", colnames(meta_227116))
 
 
 #Mapping sample to the Condition
 mapping <- c(meta_227116$condition)
-names(mapping) <- meta_227116$samples
+names(mapping) <- meta_227116$geo_accession
+colnames(tbl_ds2) <- names(mapping)
 
-column_conditions <- mapping[colnames(tbl)]
+new_names <- paste(colnames(tbl_ds2), mapping, sep = "_")
+colnames(tbl_ds2) <- new_names
+```
 
-new_names <- paste(colnames(tbl), column_conditions, sep = "_")
+```{r}
 
-colnames(tbl) <- new_names
-
-tbl <- rownames_to_column(tbl, "geneid")
+tbl_ds2 <- rownames_to_column(tbl_ds2, "geneid")
 
 # Summarizing the repeated geneids
-tbl <- tbl%>%
+tbl_ds2 <- tbl_ds2 %>%
   group_by(geneid) %>%
   summarise(across(where(is.numeric), sum))
 
-nrow(tbl)
+nrow(tbl_ds2)
 # converting entrezids  to ensemblids
 
 
@@ -225,6 +242,10 @@ nrow(tbl)
 
 #managig RAM Space on a 16Gb vector limit 
 rm(expr_227116, gse_227116)
+```
+
+```{r}
+tbl_ds2
 ```
 
 # Total genes ids after summarization and concatentation of gene counts : 39,376
@@ -262,7 +283,7 @@ biomart_to   <- harmonizer[[to_type]]$biomart
 
 
 # enter mapping
-input_ids <- tbl$geneid
+input_ids <- tbl_ds2$geneid
 
 unique_ids <- unique(input_ids)
 
@@ -340,28 +361,31 @@ If there is someone out there that can convert those remaining 10,925
 mapping_df <- data.frame(geneid = names(final_results),
                          ensembl_id = as.character(final_results))
 
-final_tbl <- tbl %>% 
+final_tbl_ds2 <- tbl_ds2 %>% 
   left_join(., mapping_df, by = "geneid") %>%
   dplyr::relocate(ensembl_id, .after = "geneid")
 
 #Slicing Rows with any NAs within the Data
-final_tbl <- final_tbl[complete.cases(final_tbl),]
+final_tbl_ds2 <- final_tbl_ds2[complete.cases(final_tbl_ds2),]
 
 
-final_tbl <- final_tbl %>%
+final_tbl_ds2 <- final_tbl_ds2 %>%
     group_by(ensembl_id) %>%
     summarise(across(where(is.numeric), sum)) %>%
     column_to_rownames(var = "ensembl_id")
 
 #final edits of the metadata
-meta_227116$samples <- paste0(meta_227116$samples, "_", meta_227116$condition)
+meta_227116$samples <- paste0(meta_227116$geo_accession, "_", meta_227116$condition) %>% relocate(samples, .before = geo_accesion)
 
-meta_227116 <- meta_227116 %>% dplyr::select(-c(title))
+rownames(meta_227116) <- meta_227116$samples
+
+meta_227116 <- meta_227116 %>% dplyr::select(-c(samples))
+meta_227116
 ```
 
 ```{r}
 # Unflitered Counts Saved to a DeSeqDataSet (dds object)
-covid19_ds2 <- make_dds(counts = final_tbl , metadata = meta_227116, ah_record = "AH89426")
+covid19_ds2 <- make_dds(counts = final_tbl_ds2 , metadata = meta_227116, ah_record = "AH89426")
 #renaming counts to raw counts
 assayNames(covid19_ds2)[1] <- "counts"
 
@@ -374,7 +398,7 @@ assayNames(covid19_ds2)[3] <- "log_counts"
 ```
 
 ```{r}
-dims(covid19_ds2@assays@data$counts)
+dim(covid19_ds2@assays@data$counts)
 ```
 
 ```{r}
@@ -436,7 +460,9 @@ Pre-Cleaning Meta.Data
 |     |
 
 ```{r}
-meta_161731 <- meta_161731 %>%
+meta_161731_edit <- meta_161731 %>%
+  
+  mutate(characteristics_ch1.1 = gsub(">|<", "", characteristics_ch1.1)) %>%
   mutate(characteristics_ch1.1 = gsub("age: ", "", characteristics_ch1.1)) %>%
   mutate(age = as.integer(characteristics_ch1.1)) %>%
   
@@ -450,7 +476,7 @@ meta_161731 <- meta_161731 %>%
   
   # Cohort
   mutate(characteristics_ch1.4 = gsub("cohort: ", "", characteristics_ch1.4)) %>%
-  rename(cohort = characteristics_ch1.4) %>%
+  rename(condition = characteristics_ch1.4) %>%
   
   # Hospitalized
   mutate(characteristics_ch1.5 = gsub("hospitalized: ", "", characteristics_ch1.5)) %>%
@@ -461,11 +487,11 @@ meta_161731 <- meta_161731 %>%
   rename(tissue = characteristics_ch1.6) %>%
   
   mutate(characteristics_ch1.8 = gsub("batch: ", "", characteristics_ch1.8)) %>%
-  rename(batch_num = characteristics_ch1.8)
+  rename(batch_num = characteristics_ch1.8) %>%
   
   # Batch (Converted to Integer)
-  dplyr::select(geo_accession, gender, race, cohort, batch)
-meta_161731
+  dplyr::select(geo_accession, gender, race, condition, batch_num, age)
+meta_161731_edit
 ```
 
 ### Mapping Sample Name to Condition
@@ -586,23 +612,23 @@ final_tbl_ds3 <- final_tbl_ds3 %>%
 
 ```{r}
 #final meta_data editing
-meta_161731$samples <- paste0(meta_161731$geo_accession, "_", meta_161731$cohort)
-meta_161731 <- meta_161731 %>% 
+meta_161731_edit$samples <- paste0(meta_161731$geo_accession, "_", meta_161731$cohort)
+meta_161731_edit <- meta_161731_edit %>% 
   relocate(samples, .after = geo_accession) %>% 
-  dplyr::select(samples, gender, race) %>%
+  dplyr::select(samples, gender, race, condition, batch_num, age) %>%
   separate(samples, 
            into = c("sample_id", "condition"),
            sep = "_")
-rownames(meta_161731) <- NULL
+rownames(meta_161731_edit) <- NULL
 ```
 
 ```{r}
-meta_161731
+meta_161731_edit
 ```
 
 ```{r}
 # Unflitered Counts Saved to a DeSeqDataSet (dds object)
-covid19_ds3 <- make_dds(counts = final_tbl_ds3 , metadata = meta_161731, ah_record = "AH89426")
+covid19_ds3 <- make_dds(counts = final_tbl_ds3 , metadata = meta_161731_edit, ah_record = "AH89426")
 #renaming counts to raw counts
 assayNames(covid19_ds3)[1] <- "counts"
 

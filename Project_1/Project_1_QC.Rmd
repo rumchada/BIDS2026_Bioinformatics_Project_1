@@ -273,8 +273,10 @@ If we look closely to our DEGs we want to be certain we are capturing the biolog
 
 Ultimately the goal of batch correction is scientific replicalbility and synchronization.
 
+PC_variance Association not hard Variance Decomposition
+
 ```{r}
-batch_effect_measure <- function(bulk_ds){
+pc_var_association <- function(bulk_ds){
   library(pheatmap)
   vst_mat <- assay(bulk_ds, "var_stable")
     #Select top variable gene
@@ -347,16 +349,112 @@ batch_effect_measure <- function(bulk_ds){
     }
   }
   
-  log_p_matrix <- -log10(p_matrix) %>% na.omit()
+  log_p_matrix <- -log10(p_matrix) %>% as.data.frame() %>% na.omit()
   
   # 5. Plot the heatmap
-  p_val_map <-pheatmap(log_p_matrix,  cluster_rows=F, cluster_cols=F)
+  p_val_map <-pheatmap(log_p_matrix,  cluster_rows=F, cluster_cols=F, main = "Correlation between of MetaVar X within PCX") 
   return(p_val_map)
 }
 ```
 
 ```{r}
-batch_effect_measure(covid19_ds1)
-batch_effect_measure(covid19_ds2)
-batch_effect_measure(covid19_ds3)
+pc_var_association(covid19_ds1)
+pc_var_association(covid19_ds2)
+pc_var_association(covid19_ds3)
+```
+
+Results. Accounting for Batch Effects within a dataset result:
+
+Principal Variance Component Analysis.
+
+<https://www.niehs.nih.gov/research/resources/software/biostatistics/pvca>
+
+Method:
+
+For each meta_variable and top variable genes' PC, perfrom a statitical test that will tell us the the correlation between that variable and the top variable genes'
+
+Should be able to see Via PCA for the Specific Samples.
+
+For the sake brevity lets reduce it doiwn to the healthy and COVID-19 samples
+
+# Integrating the datasets together
+
+```{r}
+# Adding DataSet Moniceurs
+colData(covid19_ds1)$ds_origin <- "GSE202805"
+colData(covid19_ds2)$ds_origin <- "GSE152641"
+colData(covid19_ds3)$ds_origin <- "GSE161731"
+```
+
+```{r}
+unique(as.data.frame(covid19_ds1@colData)$condition)
+unique(as.data.frame(covid19_ds2@colData)$condition) 
+unique(as.data.frame(covid19_ds3@colData)$condition)
+```
+
+At this point ended up replacing GSE22116 with GSE152641 because of disease state homogeneity and switching a cleaning the meta_data is a hassle
+
+1.  standardize sample names in meta_data
+
+```{r}
+covid19_ds1@colData$condition <- covid19_ds1@colData$condition %>% tolower() %>% gsub("acute", "covid19",.)
+covid19_ds2@colData$condition <- covid19_ds2@colData$condition %>% tolower()
+covid19_ds3@colData$condition <- covid19_ds3@colData$condition %>% tolower() %>% gsub("-", "", .)
+```
+
+2\. Subsetting for shared genes IDs within each object
+
+```{r}
+common_genes <- Reduce(intersect, list(rownames(covid19_ds1), rownames(covid19_ds2), rownames(covid19_ds3)))
+covid_ds1_shared <- covid19_ds1[common_genes, ]
+covid_ds2_shared <- covid19_ds2[common_genes, ]
+covid_ds3_shared <- covid19_ds3[common_genes, ]
+
+counts_table_one <- counts(covid_ds1_shared , normalized = FALSE)
+counts_table_two <- counts(covid_ds2_shared , normalized = FALSE)
+counts_table_three <- counts(covid_ds3_shared , normalized = FALSE)
+
+
+shared_counts <- cbind(counts_table_one, counts_table_two, counts_table_three)
+
+
+```
+
+Filtering Low counts in the combined Dataset via counts in individual Datasets
+
+```{r}
+meta1 <- as.data.frame(colData(covid19_ds1))
+meta2 <- as.data.frame(colData(covid19_ds2))
+meta3 <- as.data.frame(colData(covid19_ds3))
+
+meta_data_stnrd <- function(df) {
+  # If 'batch_num' exists and isn't entirely NA
+  if("batch_num" %in% colnames(df)) {
+    # Combine dataset origin and internal batch (e.g., "GSE161731_B1")
+    df$unified_batch <- paste0(df$ds_origin, "_B", df$batch_num)
+  } else {
+    # If no internal batch metadata exists, the dataset itself is the batch
+    df$unified_batch <- df$ds_origin
+  }
+  return(df)
+} 
+
+meta1 <- meta_data_stnrd(meta1)
+meta2 <- meta_data_stnrd(meta2)
+meta3 <- meta_data_stnrd(meta3)
+
+
+keep_cols <- c("condition", "ds_origin", "unified_batch")
+
+shared_metadata <- rbind(meta1[, keep_cols, drop=FALSE],
+                         meta2[, keep_cols, drop=FALSE],
+                         meta3[, keep_cols, drop=FALSE])
+# reording shared meta_data for rownames
+shared_metadata <- shared_metadata[colnames(shared_counts), ]
+```
+
+Filtering for Intra-low counts
+
+```{r}
+
 ```
