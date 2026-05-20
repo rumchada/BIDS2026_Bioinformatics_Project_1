@@ -16,6 +16,7 @@ library(org.Hs.eg.db)
 library(DESeq2)
 library(clusterProfiler)
 library(RNAseqQC)
+source("Project_1_function_lab.R")
 ```
 
 # Reading in the files
@@ -150,93 +151,6 @@ plot_gene_detection(covid19_ds3) +
 Euclidean Distance
 
 ```{r}
-baseline_dimreduction <- function(bulk_dataset){
-  
-  library(umap)
-  library(ggplot2)
-  
-  #prioritize variance stable assay within the bulk_dataset
-  assays(bulk_dataset) <- assays(bulk_dataset)[c("var_stable", "counts", "log_counts")]
-  # takes the euclidan distance of a variance stabilized dataset
-  # row by row euclidean distance against each other
-  # plots the visual distance between each sample onto heatmap
-  distance_plot <- plot_sample_clustering(bulk_dataset, anno_vars = c("condition"), distance = "euclidean")
-  
-  
-  #____Extracting Top Variable Gene per sample -----#
-  # Setting Variance Stable Counts as Priority Assay
-  vst_mat <- assay(bulk_dataset, "var_stable")
-  #Select top variable gene
-  top_var_genes <- head(order(rowVars(vst_mat), decreasing = TRUE), 2000)
-  vst_top <- vst_mat[top_var_genes, ]
-  # Run PCA via R
-  # Remember PCA is taking the right unitary martrix (VT) (feature space) of SVD
-  # VT tells us the principal directions of the data set
-  # multiply the the original matrix by the right unitary which is equivalent to the
-  # U time signma (left unitary) * Singular values (Size of the PCs)
-  pca_res <- prcomp(t(vst_top))
-  
-  
-  # Plotting first two PCAs
-  pca_plot <- plot_pca(bulk_dataset, PC_x = 1, PC_y = 2, color_by = "condition")
-  
-  
-  
-  
-  
-  
-  # Calculating Percentage of Variance Per PC for the Scree Plot
-  
-  # Calculate percentage variance explained
-  var_explained <- pca_res$sdev^2 / sum(pca_res$sdev^2) * 100
-  
-  # Create a data frame for plotting (first 10 PCs)
-  scree_data <- data.frame(
-    PC = paste0("PC", 1:10),
-    Variance = var_explained[1:10]
-  )
-  
-  # Ensure PC is treated as a factor in order
-  scree_data$PC <- factor(scree_data$PC, levels = scree_data$PC)
-  
-  # Scree Plot ensures that we are plotting PCs that capture the most amount of variability within our data
-  scree_plot <- ggplot(scree_data, aes(x = PC, y = Variance, group = 1)) +
-    geom_line(color = "red", size = 1) +
-    geom_point(color = "red", size = 2) +
-    labs(title = "Scree Plot: Variance Explained per PC",
-         x = "Principal Component",
-         y = "Percentage of Variance (%)") +
-    theme_minimal()
-  
-  
-  #Input the Left Unitary * Singular Values
-  # 1. Run PCA
-  pca_res <- prcomp(t(assay(bulk_dataset, "var_stable")), rank. = 50)
-  
-  # 2. Use the 'x' slot (the PC scores) as input for UMAP
-  # We only take the number of PCs identified by your scree plot (e.g., 1:15)
-  umap_out <- umap(pca_res$x[, 1:15])
-  
-  
-  umap_df <- data.frame(
-     Sample_IDS = rownames(pca_res$x),
-     UMAP_1 = umap_out$layout[, 1],
-     UMAP_2 = umap_out$layout[, 2],
-     Condition = as.factor(colData(bulk_dataset)$condition))
-  
-  umap_plot <- ggplot(umap_df, aes(x = UMAP_1, y = UMAP_2, color = Condition)) +
-    geom_point(size = 3) +
-    theme_minimal() +
-    labs(title = "UMAP of COVID-19 Samples", subtitle = "Input: Top 15 PCs from VST Data")
-  
-  
-  
-  dimreduction_visuals <- c(distance_plot, scree_plot, pca_plot, umap_plot)
-  return(dimreduction_visuals)
-}
-```
-
-```{r}
 baseline_dimreduction(covid19_ds1)
 baseline_dimreduction(covid19_ds2)
 baseline_dimreduction(covid19_ds3)
@@ -276,88 +190,6 @@ Ultimately the goal of batch correction is scientific replicalbility and synchro
 PC_variance Association not hard Variance Decomposition
 
 ```{r}
-pc_var_association <- function(bulk_ds){
-  library(pheatmap)
-  vst_mat <- assay(bulk_ds, "var_stable")
-    #Select top variable gene
-    top_var_genes <- head(order(rowVars(vst_mat), decreasing = TRUE), 2000)
-    vst_top <- vst_mat[top_var_genes, ]
-    # Run PCA via R
-    # Remember PCA is taking the right unitary martrix (VT) (feature space) of SVD
-    # VT tells us the principal directions of the data set
-    # multiply the the original matrix by the right unitary which is equivalent to the
-    # U time signma (left unitary) * Singular values (Size of the PCs)
-    pca_res <- prcomp(t(vst_top))
-  
-  top_pcs <- pca_res$x[, 1:10]
-  
-  #creating a list of possible covariate to compare with PCs
-  meta_data <- as.data.frame(bulk_ds@colData)
-  
-  
-  covars <- split(meta_data, 
-                  rep(1:ncol(meta_data),
-                  each = nrow(meta_data)))
-  
-  covars <- lapply(seq_len(ncol(meta_data)),
-                   function(x) meta_data[ , x])
-  
-  names(covars) <- colnames(meta_data)
-  
-  
-  
-  
-  get_p_value <- function(pc_vector, var) {
-    
-    valid <- !is.na(pc_vector) & !is.na(var)
-    pc_vector <- pc_vector[valid]
-    var_vector <- var[valid]
-    
-    
-    if (is.numeric(var_vector)) {
-      # Continuous variable: use linear regression/correlation test
-      return(summary(lm(pc_vector ~ var_vector))$coefficients[2, 4])
-    } else {
-      # Categorical variable: use ANOVA
-      fit <- aov(pc_vector ~ as.factor(var_vector))
-                 
-      anova_sum <- summary(fit)[[1]]
-      p_val <- anova_sum[1, "Pr(>F)"]
-      
-      if (is.null(p_val) || length(p_val) != 1) {
-        return(NA)
-      }
-      return(p_val)
-    }
-  }
-  
-  
-  p_matrix <- matrix(NA, 
-                     nrow = length(covars), 
-                     ncol = ncol(top_pcs),
-                     dimnames = list(names(covars), colnames(top_pcs)))
-  
-  
-  for(vars in names(covars)){
-    for(pcs in colnames(top_pcs)){
-      
-      current_var <- covars[[vars]]
-      current_pc <- top_pcs[, pcs]
-      
-      
-      p_matrix[vars, pcs] <- get_p_value(current_pc, current_var)
-    }
-  }
-  
-  log_p_matrix <- -log10(p_matrix) %>% as.data.frame() %>% na.omit()
-  
-  # 5. Plot the heatmap
-  p_val_map <-pheatmap(log_p_matrix,  cluster_rows=F, cluster_cols=F, main = "Correlation between of MetaVar X within PCX") 
-  return(p_val_map)
-}
-```
-
-```{r}
 pc_var_association(covid19_ds1)
 pc_var_association(covid19_ds2)
 pc_var_association(covid19_ds3)
@@ -377,7 +209,7 @@ Should be able to see Via PCA for the Specific Samples.
 
 For the sake brevity lets reduce it doiwn to the healthy and COVID-19 samples
 
-# Integrating the datasets together
+# Harmonizing the DataSets
 
 ```{r}
 # Adding DataSet Moniceurs
@@ -394,7 +226,7 @@ unique(as.data.frame(covid19_ds3@colData)$condition)
 
 At this point ended up replacing GSE22116 with GSE152641 because of disease state homogeneity and switching a cleaning the meta_data is a hassle
 
-1.  standardize sample names in meta_data
+### Standardize sample names in meta_data
 
 ```{r}
 covid19_ds1@colData$condition <- covid19_ds1@colData$condition %>% tolower() %>% gsub("acute", "covid19",.)
@@ -402,7 +234,7 @@ covid19_ds2@colData$condition <- covid19_ds2@colData$condition %>% tolower()
 covid19_ds3@colData$condition <- covid19_ds3@colData$condition %>% tolower() %>% gsub("-", "", .)
 ```
 
-2\. Subsetting for shared genes IDs within each object
+### Subsetting for shared genes IDs  within each object
 
 ```{r}
 common_genes <- Reduce(intersect, list(rownames(covid19_ds1), rownames(covid19_ds2), rownames(covid19_ds3)))
@@ -420,7 +252,7 @@ shared_counts <- cbind(counts_table_one, counts_table_two, counts_table_three)
 
 ```
 
-Filtering Low counts in the combined Dataset via counts in individual Datasets
+### Filtering Low counts in the combined Dataset via counts in individual Datasets
 
 ```{r}
 meta1 <- as.data.frame(colData(covid19_ds1))
@@ -453,8 +285,108 @@ shared_metadata <- rbind(meta1[, keep_cols, drop=FALSE],
 shared_metadata <- shared_metadata[colnames(shared_counts), ]
 ```
 
-Filtering for Intra-low counts
+### Filtering for Intra-low counts within DataSets
 
 ```{r}
+unique_datasets <- unique(shared_metadata$ds_origin)
 
+ds <- unique_datasets[1]
+
+
+filter_matrix <- matrix(FALSE, 
+                        nrow = nrow(shared_counts), 
+                        ncol = length(unique_datasets),
+                        dimnames = list(rownames(shared_counts), unique_datasets))
+
+
+#subset for a specific Dataset
+# keep this in mind for future subsetting by condition
+#extract the specific colnames that align with columns within the shared count matrix
+for(ds in unique_datasets){
+    ds_samples <- colnames(shared_counts)[shared_metadata$ds_origin == ds]
+    
+    
+    ds_counts <- shared_counts[, ds_samples, drop = FALSE]
+    
+    # genes with at least a total of 3 counts across all three experiments in at least 3 samples
+    passing_counts <- rowSums(ds_counts >= 10) >= 3
+    
+    filter_matrix[, ds] <- passing_counts
+
+}
+
+keep_genes <- rowSums(filter_matrix) > 0
+
+length(keep_genes)
+
+filtered_counts <- shared_counts[keep_genes, ]
+
+```
+
+# New Integrated DataSet Create and normalization
+
+```{r}
+int_ds <- make_dds(filtered_counts, metadata = shared_metadata, ah_record = "AH89426")
+#renaming counts to raw counts
+assayNames(int_ds)[1] <- "counts"
+
+#variance stabilized Raw counts
+assays(int_ds)[[2]] <- vst(int_ds@assays@data$counts)
+assayNames(int_ds)[2] <- "var_stable"
+
+#log_transformed (log normalized counts)
+assays(int_ds)[[3]] <- log10(int_ds@assays@data$counts + 1)
+assayNames(int_ds)[3] <- "log_counts"
+```
+
+### Pre-Batch Correction Diagnosis
+
+```{r}
+bulk_dataset <- int_ds
+grouping <- "ds_origin"
+baseline_dimreduction(bulk_dataset, "ds_origin")
+```
+
+```{r}
+scree_plot
+pc_var_association(int_ds)
+```
+
+# Batch-Corrections
+
+```{r}
+library(sva)
+adjusted_counts <- ComBat_seq(counts = filtered_counts,
+                              batch = shared_metadata$ds_origin,
+                              group = shared_metadata$condition)
+corrected_int_data <- make_dds(adjusted_counts, metadata = shared_metadata, ah_record = "AH89426")
+#renaming counts to raw counts
+assayNames(corrected_int_data)[1] <- "counts"
+
+#variance stabilized Raw counts
+assays(corrected_int_data)[[2]] <- vst(corrected_int_data@assays@data$counts)
+assayNames(corrected_int_data)[2] <- "var_stable"
+
+#log_transformed (log normalized counts)
+assays(corrected_int_data)[[3]] <- log10(corrected_int_data@assays@data$counts + 1)
+assayNames(corrected_int_data)[3] <- "log_counts"
+```
+
+Manual Memory Management
+
+```{r}
+rm(covid19_ds1, covid19_ds2, covid19_ds3)
+rm(covid_ds1_shared, covid_ds2_shared, covid_ds3_shared)
+rm(meta1, meta2, meta3)
+rm(counts_table_one, counts_table_two, counts_table_three)
+```
+
+```{r}
+bulk_dataset <- corrected_int_data
+grouping <- "ds_origin"
+baseline_dimreduction(bulk_dataset, grouping)
+```
+
+```{r}
+pc_var_association(corrected_int_data)
 ```
