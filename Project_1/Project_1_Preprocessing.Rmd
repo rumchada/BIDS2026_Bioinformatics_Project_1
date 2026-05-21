@@ -53,8 +53,9 @@ counts <- read.delim(gzfile(path))
 colnames(counts) <- sub("\\.bam$", "", colnames(counts))
 
 counts <- counts %>% dplyr::select(-c(Chr, Start, End, Strand, Length))
+```
 
-
+```{r}
 meta_data <- meta_202805
 meta_data
 meta_data <- meta_data %>%
@@ -66,7 +67,7 @@ meta_data <- meta_data %>%
 mapping <- c(meta_data$characteristics_ch1)
 names(mapping) <- meta_data$title
 
-colnames(counts) <- mapping[colnames(counts)]
+colnames(counts) <- mapping[colnames(counts)] 
 
 colnames(counts) <- paste(names(mapping), colnames(counts), sep = "_")
 
@@ -77,12 +78,15 @@ colnames(counts)[1] <- "geneid"
 counts$geneid <- gsub("\\..*", "", counts$geneid)
 colnames(counts) <- gsub(" ", "", colnames(counts))
 
+# So this is a crucial part to remember lol is that acute-covid19, convalescant covid
+#added waay late into the game after first round of harmonization and integration
+colnames(counts) <- gsub("acute", "covid19", colnames(counts))
 
 # MetaData construction
 metadata <- data.frame(
   sample = colnames(counts),
   condition = dplyr::case_when(
-    grepl("_acute$", colnames(counts)) ~ "acute",
+    grepl("_covid19$", colnames(counts)) ~ "covid19",
     grepl("_convalescent$", colnames(counts)) ~ "convalescent",
     grepl("healthy$", colnames(counts)) ~ "healthy",
     TRUE ~ NA_character_
@@ -105,10 +109,6 @@ counts
 ```
 
 ```{r}
-metadata
-```
-
-```{r}
 # Unflitered Counts Saved to a DeSeqDataSet (dds object)
 covid19_ds1 <- make_dds(counts = counts , metadata = metadata, ah_record = "AH89426")
 #renaming counts to raw counts
@@ -120,6 +120,10 @@ assayNames(covid19_ds1)[2] <- "var_stable"
 #log_transformed (log normalized counts)
 assays(covid19_ds1)[[3]] <- log10(covid19_ds1@assays@data$counts + 1)
 assayNames(covid19_ds1)[3] <- "log_counts"
+```
+
+```{r}
+colData(covid19_ds1)
 ```
 
 ```{r}
@@ -141,17 +145,11 @@ plot_biotypes
 plot_biotypes(covid19_ds1)
 ```
 
-Filtering out low count Genes
-
-```{r}
-covid19_ds1 <- filter_genes(covid19_ds1, min_count = 5, min_rep = 4)
-```
-
-## Reading in GSE227116
+## Reading in GSE152641
 
 65 blood Samples recoved form 46 COVID-19 convalescent patients and 10 healthy donors were analyzed by RNA- Sequencing
 
-Platform: Illumina HiSeq 2500 (Homo sapiens)
+Platform:: NovaSeq 6000
 
 10 healthd donors, 65 blood samples.
 
@@ -375,7 +373,8 @@ final_tbl_ds2 <- final_tbl_ds2 %>%
     column_to_rownames(var = "ensembl_id")
 
 #final edits of the metadata
-meta_227116$samples <- paste0(meta_227116$geo_accession, "_", meta_227116$condition) %>% relocate(samples, .before = geo_accesion)
+meta_227116$samples <- paste0(meta_227116$geo_accession, "_", meta_227116$condition)
+
 
 rownames(meta_227116) <- meta_227116$samples
 
@@ -420,6 +419,8 @@ Illumina NovaSeq 6000 (Homo sapiens)
 
 (early ≤10 days, middle 11-21 days, late \>21 days)
 
+tissue()
+
 **Categorical severity of Healthy and COVID-19 patients**
 
 59 = acute respiratory infection
@@ -449,11 +450,11 @@ path_ds3 <- paste(urld_ds3, "acc=GSE161731", "file=GSE161731_raw_counts_GRCh38.p
 tbl_ds3 <- as.data.frame(as.matrix(data.table::fread(path_ds3, header=T, colClasses="integer"), rownames=1))
 ```
 
+Pre-Cleaning Meta.Data
+
 ```{r}
 View(meta_161731)
 ```
-
-Pre-Cleaning Meta.Data
 
 |     |
 |:----|
@@ -479,18 +480,27 @@ meta_161731_edit <- meta_161731 %>%
   rename(condition = characteristics_ch1.4) %>%
   
   # Hospitalized
-  mutate(characteristics_ch1.5 = gsub("hospitalized: ", "", characteristics_ch1.5)) %>%
-  rename(hospitalized = characteristics_ch1.5) %>%
+  mutate(characteristics_ch1.6 = gsub("hospitalized: ", "", characteristics_ch1.6)) %>%
+  rename(hospitalized = characteristics_ch1.6) %>%
   
   # Tissue
-  mutate(characteristics_ch1.6 = gsub("tissue: ", "", characteristics_ch1.6)) %>%
-  rename(tissue = characteristics_ch1.6) %>%
+  mutate(characteristics_ch1.7 = gsub("tissue: ", "", characteristics_ch1.7)) %>%
+  rename(tissue = characteristics_ch1.7) %>%
   
   mutate(characteristics_ch1.8 = gsub("batch: ", "", characteristics_ch1.8)) %>%
   rename(batch_num = characteristics_ch1.8) %>%
   
+  #time collected, making it a longitudinal study
+  mutate(characteristics_ch1.5 = gsub("time_since_onset: ", "", characteristics_ch1.5)) %>%
+  rename(time_point = characteristics_ch1.5) %>%
+  
+ # dplyr::filter(time_point %in% 'NA') %>%
+
+  dplyr::filter(description != 'excluded from analyses for poor data quality') %>%
+  
   # Batch (Converted to Integer)
-  dplyr::select(geo_accession, gender, race, condition, batch_num, age)
+  dplyr::select(geo_accession, gender, race, condition, batch_num, age, time_point)
+
 meta_161731_edit
 ```
 
@@ -498,12 +508,21 @@ meta_161731_edit
 
 ```{r}
 #Mapping sample to the Condition
-mapping <- c(meta_161731$cohort)
-names(mapping) <- meta_161731$geo_accession
-new_names <- paste(colnames(tbl_ds3), mapping, sep = "_")
-colnames(tbl_ds3) <- new_names
-tbl_ds3 <- rownames_to_column(tbl_ds3, "geneid")
-tbl_ds3
+mapping <- meta_161731_edit$condition
+names(mapping) <- meta_161731_edit$geo_accession
+length(mapping)
+```
+
+```{r}
+length(colnames(tbl_ds3))
+```
+
+```{r}
+#Mapping sample to the Condition
+mapping <- meta_161731_edit$condition
+names(mapping) <- meta_161731_edit$geo_accession
+# align mapping to column order
+mapping <- mapping[colnames(tbl_ds3)]
 ```
 
 ```{r}

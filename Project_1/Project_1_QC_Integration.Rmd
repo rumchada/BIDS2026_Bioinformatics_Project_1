@@ -5,7 +5,7 @@ output: html_document
 
 # Library Read-In
 
-```{r}
+```{r, include =FALSE}
 library(tidyverse)
 library(devtools)
 library(vroom)
@@ -229,12 +229,16 @@ At this point ended up replacing GSE22116 with GSE152641 because of disease stat
 ### Standardize sample names in meta_data
 
 ```{r}
-covid19_ds1@colData$condition <- covid19_ds1@colData$condition %>% tolower() %>% gsub("acute", "covid19",.)
+covid19_ds1@colData$condition <- covid19_ds1@colData$condition %>% tolower()
 covid19_ds2@colData$condition <- covid19_ds2@colData$condition %>% tolower()
 covid19_ds3@colData$condition <- covid19_ds3@colData$condition %>% tolower() %>% gsub("-", "", .)
+
+unique(as.data.frame(covid19_ds1@colData)$condition)
+unique(as.data.frame(covid19_ds2@colData)$condition) 
+unique(as.data.frame(covid19_ds3@colData)$condition)
 ```
 
-### Subsetting for shared genes IDs  within each object
+### Subsetting for shared genes IDs within each object
 
 ```{r}
 common_genes <- Reduce(intersect, list(rownames(covid19_ds1), rownames(covid19_ds2), rownames(covid19_ds3)))
@@ -290,38 +294,80 @@ shared_metadata <- shared_metadata[colnames(shared_counts), ]
 ```{r}
 unique_datasets <- unique(shared_metadata$ds_origin)
 
-ds <- unique_datasets[1]
 
+matrix_list <- list()
 
-filter_matrix <- matrix(FALSE, 
-                        nrow = nrow(shared_counts), 
-                        ncol = length(unique_datasets),
-                        dimnames = list(rownames(shared_counts), unique_datasets))
-
+filter_matrix <- matrix(
+    FALSE,
+    nrow = nrow(shared_counts),
+    ncol = length(unique_datasets),
+    dimnames = list(rownames(shared_counts), unique_datasets)
+)
 
 #subset for a specific Dataset
 # keep this in mind for future subsetting by condition
 #extract the specific colnames that align with columns within the shared count matrix
 for(ds in unique_datasets){
+  
+    #subset into specific data
     ds_samples <- colnames(shared_counts)[shared_metadata$ds_origin == ds]
     
-    
     ds_counts <- shared_counts[, ds_samples, drop = FALSE]
+    print(dim(ds_counts))
     
     # genes with at least a total of 3 counts across all three experiments in at least 3 samples
     passing_counts <- rowSums(ds_counts >= 10) >= 3
-    
-    filter_matrix[, ds] <- passing_counts
 
+    
+   filter_matrix[ ,ds] <- passing_counts
 }
 
 keep_genes <- rowSums(filter_matrix) > 0
 
-length(keep_genes)
+
+#keep_samples <- colnames(shared_counts)[
+   # grepl("(_covid19|_healthy|_COVID-19|_Healthy)$",
+      #    colnames(shared_counts))
+#]
 
 filtered_counts <- shared_counts[keep_genes, ]
+dim(filtered_counts)
 
+shared_metadata <- shared_metadata[colnames(filtered_counts), ]
+dim(shared_metadata)
 ```
+
+```{r}
+diagnostic_table <- data.frame(
+    average_zero_cnt = colMeans(filtered_counts == 0)
+  )
+
+diagnostic_table <- diagnostic_table %>%
+    rownames_to_column("sample_info") %>%
+    separate(sample_info, into = c("sample", "condition"), sep = "_(?=[^_]+$)") %>%
+  # replacing variation of condition names to covid19
+    mutate(condition = ifelse(
+            grepl("(COVID-19$|COVID19$)", condition),
+            "covid19",
+            condition)) %>%
+    mutate(ds_origin = as.factor(shared_metadata$ds_origin))
+
+boxplot_zero_cnt <- diagnostic_table %>%
+  ggplot() +
+  aes(x = ds_origin, y = average_zero_cnt, fill = condition) +
+  geom_boxplot() +
+  ylab("mean_zero_cnt_per_sample")
+
+boxplot_zero_cnt
+```
+
+```{r}
+shared_metadata
+```
+
+Problem as of Wed May 20th,
+
+We are seeing miss attibution of samples that come from one datase
 
 # New Integrated DataSet Create and normalization
 
@@ -345,6 +391,7 @@ assayNames(int_ds)[3] <- "log_counts"
 bulk_dataset <- int_ds
 grouping <- "ds_origin"
 baseline_dimreduction(bulk_dataset, "ds_origin")
+baseline_dimreduction(bulk_dataset, NA)
 ```
 
 ```{r}
@@ -385,8 +432,42 @@ rm(counts_table_one, counts_table_two, counts_table_three)
 bulk_dataset <- corrected_int_data
 grouping <- "ds_origin"
 baseline_dimreduction(bulk_dataset, grouping)
+baseline_dimreduction(bulk_dataset, NA)
 ```
 
 ```{r}
 pc_var_association(corrected_int_data)
+```
+
+State of the project:
+
+dataset 3 has more than just healthy and covid disease states. It has influenza, bacterial disease in lungs. It's likely these are throwing off the batch correction. I should subset to only covid and healthy disease states
+
+Subset by Disease States leaving only two conditions 'covid19' and healthy\
+
+Checking average_zero inflation per sample per dataset
+
+```{r}
+r}
+diagnostic_table <- data.frame(
+    average_zero_cnt = colMeans(filtered_counts == 0)
+  )
+
+diagnostic_table <- diagnostic_table %>%
+    rownames_to_column("sample_info") %>%
+    separate(sample_info, into = c("sample", "condition"), sep = "_(?=[^_]+$)") %>%
+  # replacing variation of condition names to covid19
+    mutate(condition = ifelse(
+            grepl("(COVID-19$|COVID19$)", condition),
+            "covid19",
+            condition)) %>%
+    mutate(ds_origin = as.factor(shared_metadata$ds_origin))
+
+boxplot_zero_cnt <- diagnostic_table %>%
+  ggplot() +
+  aes(x = ds_origin, y = average_zero_cnt, fill = condition) +
+  geom_boxplot() +
+  ylab("mean_zero_cnt_per_sample")
+
+boxplot_zero_cnt
 ```
