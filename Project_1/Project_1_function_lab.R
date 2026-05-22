@@ -1,3 +1,6 @@
+# Project 1 Part 1 and Part 3 Functions
+#QC functions and dim_reduction functions.
+
 pc_var_association <- function(bulk_ds){
   library(pheatmap)
   vst_mat <- assay(bulk_ds, "var_stable")
@@ -172,4 +175,133 @@ baseline_dimreduction <- function(bulk_dataset,
   dimreduction_visuals <- c(distance_plot, scree_plot, pca_plot$plot, umap_plot)
   return(dimreduction_visuals)
 }
+
+
+
+# Part 2 Intra-Dataset Differntial Expression Functions
+edgeR_diffexp <- function(dds_object, condition_col, ref_group_name) {
+  require(edgeR)
+  #For each condition combination, runs an indepedent differential expression analysis
+  #0-Intercept
+  
+  #Converting to a DGEList
+  raw_counts <- dds_object@assays@data$counts
+  metadata <- dds_object@colData
+  y <- DGEList(counts = raw_counts , group = metadata$condition)
+  
+  #Filter by low counts
+  keep <- filterByExpr(y)
+  y <- y[keep, , keep.lib.sizes=FALSE]
+  #Performs TMM Normalization, Corrects for systemic biases between samples.
+  y <- calcNormFactors(y)
+  
+  # reaffirm healthy as level reference
+  y$samples$condition <- relevel(
+    factor(y$samples$group),
+    ref = ref_group_name
+  )
+  
+  # ~0+ not to include an intercept column and instead to include a column for each group
+  # Always use a model intecept term because then the data will no fit to the glm line as closely
+  # A model without an intercept term would only be recommended in cases where there is a strong biological reason why a zero covariate should be associated with a zero expression value (Law, et.al., F10000Research, 2020, PMID: 33604029)
+  
+  design <- model.matrix(~0+condition, data = y$samples)
+  contrast_strings <- combn(conds, 2, FUN = function(x) paste0(x[1], "-", x[2]))
+  
+  
+  contrast_strings
+  colnames(design) <- gsub(glue("^{condition_col}"), "", colnames(design))
+  
+  my.contrasts <- makeContrasts(
+    contrasts = contrast_strings,
+    levels = colnames(design))
+  
+  #Test Using a GLM
+  results <- list()
+  
+  # Run Dispersion on the Data
+  y <- estimateDisp(y, design)
+  
+  #fit model once
+  fit <- glmQLFit(y, design)
+  
+  # run the test for each contrast
+  for(i in seq_len(ncol(my.contrasts))) {
+    
+    qlf <- glmQLFTest( fit, contrast = my.contrasts[, i])
+    
+    results[[colnames(my.contrasts)[i]]] <-
+      topTags(qlf, n = nrow(y), p.value = 0.05, adjust.method = 'bonferroni')$table %>%
+      as.data.frame() %>%
+      tibble::rownames_to_column("geneid") %>%
+      dplyr::rename_with( ~ "log2foldchange", .cols = "logFC") %>%
+      dplyr::rename_with( ~ "p.val_adj", .cols = "FWER" )
+  }
+  
+  return(results)
+}
+
+
+# Volcano Plot Visualizations
+volcano_plot <- function(diffexp_df, 
+                         #data-alterations
+                         unique = FALSE,
+                         log2fc_thresh = 0,
+                         p.val_thresh = 0.05,
+                         #visual parts
+                         lower_xlim = -5, 
+                         upper_xlim = 5, 
+                         step = 1) {
+  
+  library(ggrepel)
+  library(ggplot2)
+  
+  volcano_df <- diffexp_df %>%
+    mutate(
+      color = case_when(
+        p.val_adj < p.val_thresh & log2foldchange >  log2fc_thresh  ~ "Upregulated",
+        p.val_adj < p.val_thresh & log2foldchange < -log2fc_thresh  ~ "Downregulated",
+        TRUE ~ "Not Significant"
+      )
+    )
+  
+  
+  volplot <- ggplot(volcano_df) +
+    
+    aes(x = log2foldchange,y = -log10(p.val_adj), color = color, label = geneid) +
+    
+    geom_point(size = 2) +
+    
+    geom_vline(xintercept = c(-0.6, 0.6), col = "gray",linetype = "dashed"
+    ) +
+    
+    geom_hline(yintercept = -log10(0.05), col = "gray",linetype = "dashed") +
+    
+    theme_classic(base_size = 12) +
+    
+    theme(axis.title.y = element_text(margin = margin(0, 20, 0, 0),size = rel(1.1),color = "black"
+    ),
+    
+    axis.title.x = element_text(hjust = 0.5, margin = margin(20, 0, 0, 0),size = rel(1.1),
+                                color = "black"
+    ),
+    
+    plot.title = element_text(hjust = 0.5)
+    ) +
+    
+    scale_color_manual(values = c("Upregulated" = "red","Downregulated" = "blue","Not Significant" = "gray"
+    )
+    ) +
+    
+    geom_text(nudge_y = 0.5, check_overlap = TRUE) +
+    
+    coord_cartesian(xlim = c(lower_xlim, upper_xlim)) +
+    
+    scale_x_continuous(
+      breaks = seq(lower_xlim, upper_xlim, step)
+    )
+  
+  return(list(volcano_df, volplot))
+}
+
 
