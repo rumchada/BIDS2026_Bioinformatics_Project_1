@@ -1,0 +1,122 @@
+---
+title: "Intra_Differential_Expression"
+output: html_document
+---
+
+Read-In Libraries
+
+```{r, include =FALSE}
+library(tidyverse)
+library(devtools)
+library(vroom)
+library(GEOquery)
+library(biomaRt)
+library(dplyr)
+library(org.Hs.eg.db)
+library(DESeq2)
+library(clusterProfiler)
+library(RNAseqQC)
+library(edgeR)
+source("Project_1_function_lab.R")
+```
+
+```{r}
+covid19_ds1 <- readRDS("./post_processed_data/gse202805_covid19_ds1.rds")
+```
+
+<https://olvtools.com/en/documents/edger>
+
+```{r}
+# Converting to a DGEList
+raw_counts <- covid19_ds1@assays@data$counts
+metadata_202805 <- covid19_ds1@colData
+y <- DGEList(counts = raw_counts , group = metadata_202805$condition)
+
+#Filter by low counts
+keep <- filterByExpr(y)
+y <- y[keep, , keep.lib.sizes=FALSE]
+#Performs TMM Normalization, Corrects for systemic biases between samples.
+y <- calcNormFactors(y)
+
+# reaffirm healthy as level reference
+y$samples$condition <- relevel(
+    factor(y$samples$group),
+    ref = "healthy"
+)
+```
+
+```{r}
+diffexp_edgeR <- function(cnt_mat, 
+                                    meta_data, 
+                                    condition_col = "condition",
+                                    referance_group = "healthy"){
+  require(edgeR)
+  #Performs a basic differential expression analysis using edgeR's glm function using raw counts
+  
+  
+  y <- DGEList(counts = cnt_mat , group = metadata)
+  
+  #Filter by low counts
+  keep <- filterByExpr(y, group = metadata$condition_col)
+  y <- y[keep, , keep.lib.sizes=FALSE]
+  #Performs TMM Normalization, Corrects for systemic biases between samples.
+  y <- calcNormFactors(y)
+  
+  # reaffirm healthy as level reference
+  y$samples$condition_col <- relevel(
+      factor(y$samples$group),
+      ref = referance_group
+  )
+  
+  # ~0+ not to include an intercept column and instead to include a column for each group
+  # Always use a model intecept term because then the data will no fit to the glm line as closely
+  # A model without an intercept term would only be recommended in cases where there is a strong biological reason why a zero covariate should be associated with a zero expression value (Law, et.al., F10000Research, 2020, PMID: 33604029)
+  
+  
+  
+  design <- model.matrix(~condition, data = y$samples)
+  colnames(design) <- levels(y$samples$condition_col)
+  
+  
+  #Setting up Pairwise Comparisons
+  #Possible Comparisons
+  #healthy vs covid19, healthy vs convalescent, covid19 vs convalescent
+  
+  conds <- levels(y$samples$condition)
+  #making conditional combinations for the pairwise comparisons
+  contrast_strings <- combn(conds, 2, FUN = function(x) paste0(x[1], "-", x[2]))
+  
+  my.contrasts <- makeContrasts(
+      contrasts = contrast_strings,
+      levels = design
+  )
+  
+  #Test Using a GLM
+  results <- list()
+  
+  # Run Dispersion on the Data
+  y <- estimateDisp(y, design)
+  
+  #fit model once
+  fit <- glmQLFit(y, design)
+  
+  # run the test for each existing condition
+  for (i in seq_len(ncol(my.contrasts))){
+    
+    qlf <- glmQLFTest(fit, contrast = my.contrasts[, i])
+    
+    results[[colnames(my.contrasts)[i]]] <- as.data.frame(topTags(qlf, n=nrow(y)))
+  }
+  return(results)
+}
+```
+
+```{r}
+
+raw_counts <- covid19_ds1@assays@data$counts
+metadata_202805 <- covid19_ds1@colData
+
+
+
+results <- diffexp_edgeR(raw_counts, metadata_202805, condition_col = "condition", referance_group = "healthy")
+```

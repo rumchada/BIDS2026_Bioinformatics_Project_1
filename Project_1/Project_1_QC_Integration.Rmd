@@ -68,10 +68,11 @@ Baseline Profiling: Intra-Dataset Comparison
 ```{r}
 covid19_ds1 <- readRDS("./post_processed_data/gse202805_covid19_ds1.rds")
 
-covid19_ds2 <- readRDS("./post_processed_data/gse227116_covid19_ds2.rds")
+covid19_ds2 <- readRDS("./post_processed_data/gse152641_covid19_ds2.rds")
 
 covid19_ds3 <- readRDS("./post_processed_data/gse161731_covid19_ds3.rds")
 
+covid19_ds4 <- readRDS("./post_processed_data/gse227116_covid19_ds4.rds")
 ```
 
 #### QC Plots on raw count matrix
@@ -154,7 +155,7 @@ Euclidean Distance
 baseline_dimreduction(covid19_ds1)
 baseline_dimreduction(covid19_ds2)
 baseline_dimreduction(covid19_ds3)
-
+baseline_dimreduction(covid19_ds4)
 ```
 
 **Answering the Question:**
@@ -193,6 +194,7 @@ PC_variance Association not hard Variance Decomposition
 pc_var_association(covid19_ds1)
 pc_var_association(covid19_ds2)
 pc_var_association(covid19_ds3)
+pc_var_association(covid19_ds4)
 ```
 
 Results. Accounting for Batch Effects within a dataset result:
@@ -216,12 +218,14 @@ For the sake brevity lets reduce it doiwn to the healthy and COVID-19 samples
 colData(covid19_ds1)$ds_origin <- "GSE202805"
 colData(covid19_ds2)$ds_origin <- "GSE152641"
 colData(covid19_ds3)$ds_origin <- "GSE161731"
+colData(covid19_ds4)$ds_origin <- "GSE227116"
 ```
 
 ```{r}
 unique(as.data.frame(covid19_ds1@colData)$condition)
 unique(as.data.frame(covid19_ds2@colData)$condition) 
 unique(as.data.frame(covid19_ds3@colData)$condition)
+unique(as.data.frame(covid19_ds4@colData)$condition)
 ```
 
 At this point ended up replacing GSE22116 with GSE152641 because of disease state homogeneity and switching a cleaning the meta_data is a hassle
@@ -241,14 +245,14 @@ unique(as.data.frame(covid19_ds3@colData)$condition)
 ### Subsetting for shared genes IDs within each object
 
 ```{r}
-common_genes <- Reduce(intersect, list(rownames(covid19_ds1), rownames(covid19_ds2), rownames(covid19_ds3)))
+common_genes <- Reduce(intersect, list(rownames(covid19_ds1), rownames(covid19_ds2), rownames(covid19_ds4)))
 covid_ds1_shared <- covid19_ds1[common_genes, ]
 covid_ds2_shared <- covid19_ds2[common_genes, ]
-covid_ds3_shared <- covid19_ds3[common_genes, ]
+covid_ds4_shared <- covid19_ds4[common_genes, ]
 
 counts_table_one <- counts(covid_ds1_shared , normalized = FALSE)
 counts_table_two <- counts(covid_ds2_shared , normalized = FALSE)
-counts_table_three <- counts(covid_ds3_shared , normalized = FALSE)
+counts_table_three <- counts(covid_ds4_shared , normalized = FALSE)
 
 
 shared_counts <- cbind(counts_table_one, counts_table_two, counts_table_three)
@@ -261,32 +265,48 @@ shared_counts <- cbind(counts_table_one, counts_table_two, counts_table_three)
 ```{r}
 meta1 <- as.data.frame(colData(covid19_ds1))
 meta2 <- as.data.frame(colData(covid19_ds2))
-meta3 <- as.data.frame(colData(covid19_ds3))
+meta4 <- as.data.frame(colData(covid19_ds4))
 
 meta_data_stnrd <- function(df) {
+  
   # If 'batch_num' exists and isn't entirely NA
   if("batch_num" %in% colnames(df)) {
     # Combine dataset origin and internal batch (e.g., "GSE161731_B1")
-    df$unified_batch <- paste0(df$ds_origin, "_B", df$batch_num)
+    df$unified_batch <- as.factor(paste0(df$ds_origin, "_B", df$batch_num))
   } else {
     # If no internal batch metadata exists, the dataset itself is the batch
-    df$unified_batch <- df$ds_origin
+    df$unified_batch <- as.factor(df$ds_origin)
   }
+  
+  if(!"time_point" %in% colnames(df)){
+    df$time_point <- "none"
+  }else{
+    df$time_point[is.na(df$time_point)] <- "none"
+  }
+  
   return(df)
 } 
 
 meta1 <- meta_data_stnrd(meta1)
 meta2 <- meta_data_stnrd(meta2)
-meta3 <- meta_data_stnrd(meta3)
+meta4 <- meta_data_stnrd(meta4)
 
 
-keep_cols <- c("condition", "ds_origin", "unified_batch")
+keep_cols <- c("condition", "ds_origin", "unified_batch", "time_point")
+
 
 shared_metadata <- rbind(meta1[, keep_cols, drop=FALSE],
-                         meta2[, keep_cols, drop=FALSE],
-                         meta3[, keep_cols, drop=FALSE])
+                        meta2[, keep_cols, drop=FALSE],
+                      meta4[, keep_cols, drop=FALSE])
 # reording shared meta_data for rownames
 shared_metadata <- shared_metadata[colnames(shared_counts), ]
+shared_metadata <- shared_metadata %>% mutate(time_point = as.factor(time_point),
+                                              condition = as.factor(condition))
+
+```
+
+```{r}
+shared_metadata
 ```
 
 ### Filtering for Intra-low counts within DataSets
@@ -316,7 +336,7 @@ for(ds in unique_datasets){
     print(dim(ds_counts))
     
     # genes with at least a total of 3 counts across all three experiments in at least 3 samples
-    passing_counts <- rowSums(ds_counts >= 10) >= 3
+    passing_counts <- rowSums(ds_counts >= 10) >= 5
 
     
    filter_matrix[ ,ds] <- passing_counts
@@ -338,31 +358,11 @@ dim(shared_metadata)
 ```
 
 ```{r}
-diagnostic_table <- data.frame(
-    average_zero_cnt = colMeans(filtered_counts == 0)
-  )
-
-diagnostic_table <- diagnostic_table %>%
-    rownames_to_column("sample_info") %>%
-    separate(sample_info, into = c("sample", "condition"), sep = "_(?=[^_]+$)") %>%
-  # replacing variation of condition names to covid19
-    mutate(condition = ifelse(
-            grepl("(COVID-19$|COVID19$)", condition),
-            "covid19",
-            condition)) %>%
-    mutate(ds_origin = as.factor(shared_metadata$ds_origin))
-
-boxplot_zero_cnt <- diagnostic_table %>%
-  ggplot() +
-  aes(x = ds_origin, y = average_zero_cnt, fill = condition) +
-  geom_boxplot() +
-  ylab("mean_zero_cnt_per_sample")
-
-boxplot_zero_cnt
+shared_metadata
 ```
 
 ```{r}
-shared_metadata
+ncol(shared_counts)
 ```
 
 Problem as of Wed May 20th,
@@ -399,7 +399,7 @@ scree_plot
 pc_var_association(int_ds)
 ```
 
-# Batch-Corrections
+# Batch-Corrections Using Combat-Seq
 
 ```{r}
 library(sva)
@@ -448,7 +448,6 @@ Subset by Disease States leaving only two conditions 'covid19' and healthy\
 Checking average_zero inflation per sample per dataset
 
 ```{r}
-r}
 diagnostic_table <- data.frame(
     average_zero_cnt = colMeans(filtered_counts == 0)
   )
@@ -471,3 +470,5 @@ boxplot_zero_cnt <- diagnostic_table %>%
 
 boxplot_zero_cnt
 ```
+
+Tried Limma and Manual Batch correction all of them did worse than combat-seq
