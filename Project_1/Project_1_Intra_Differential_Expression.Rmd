@@ -1,0 +1,131 @@
+---
+title: "Intra_Differential_Expression"
+output: html_document
+---
+
+Read-In Libraries
+
+```{r, include =FALSE}
+library(tidyverse)
+library(glue)
+library(devtools)
+library(vroom)
+library(GEOquery)
+library(biomaRt)
+library(dplyr)
+library(org.Hs.eg.db)
+library(DESeq2)
+library(clusterProfiler)
+library(RNAseqQC)
+library(edgeR)
+source("Project_1_function_lab.R")
+```
+
+```{r}
+covid19_ds1 <- readRDS("./post_processed_data/gse202805_covid19_ds1.rds")
+```
+
+<https://olvtools.com/en/documents/edger>
+
+Perform EdgeR Differential Expression and plot a volcano plot for each condition comparison within the DDS object
+
+```{r}
+
+#Arguments
+dds_object <- covid19_ds1
+condition_col = "condition"
+ref_group_name = "healthy"
+
+
+#Performs inital differential expression on your DDS Object's raw counts dataframe
+# The use give the condition column from the metadata to make the test parameters
+# and the control group
+results_dds1 <- edgeR_diffexp(covid19_ds1, condition_col,  ref_group_name)
+
+# function starts here
+#create a list of 
+volcano_results <- vector("list", length(results_dds1))
+names(volcano_results) <- names(results_dds1)
+
+# for each comparison made
+for (i in seq_len(length(results_dds1))) {
+  # use the volcano_plot_function
+  # to filter through your differential expression results
+  volcano_res <- volcano_plot(
+    results_dds1[[i]],
+    log2fc_thresh = 1,
+    p.val_thresh = 0.05,
+    lower_xlim = -10,
+    upper_xlim = 10,
+    step = 5
+  )
+  
+ volcano_results[[i]] <- list(
+    
+    data = volcano_res[[1]],
+    
+    plot = volcano_res[[2]] +
+      labs(title = glue("Volcano Plot: {names(results_dds1)[i]}"))
+  )
+}
+
+filtered_results = lapply(volcano_results , function(x) x$data)
+results_vol_plots <- lapply(volcano_results, function(x) x$plot)
+```
+
+```{r}
+results_vol_plots
+```
+
+Perform an EnrichGO
+
+```{r}
+
+enrichgo_results <- vector("list", length(filtered_results))
+names(enrichgo_results) <- names(filtered_results)
+
+# for each compar
+for(i in seq_along(filtered_results)){
+  enrichgo_results[[i]] <- clusterProfiler::enrichGO(
+          gene = filtered_results[[i]]$geneid,
+           OrgDb = 'org.Hs.eg.db',
+           keyType = "ENSEMBL",
+           ont = "BP",
+           pAdjustMethod = "BH")
+}
+```
+
+Inspect your enirchGO results
+
+```{r}
+filtered_results$`healthy-covid19`
+```
+
+Unpacking ORA from GO and align to your differential expression results for the input condition
+
+```{r}
+# making a data table for each Description Term that is consider statistically significant within the context of the ORA
+
+initial_table <- filtered_results$`healthy-covid19`
+
+key <- enrichgo_results$`healthy-covid19`
+    
+chosen_desc <- "immunoglobulin mediated immune response"
+
+#assume user does not want to convert geneids
+convert = TRUE
+
+from_type = "ensembl"
+
+to_type = "symbol"
+
+ensembl_dataset <- "hsapiens_gene_ensembl"
+
+unpacked_results <-  enrichgo_unpack_ver2(intial_table = intial_table,
+                     key = key,
+                     chosen_desc = chosen_desc,
+                     conver = TRUE,
+                     from_type = "ensembl",
+                     to_type = "symbol",
+                     ensembl_dataset = "hsapiens_gene_ensembl")
+```

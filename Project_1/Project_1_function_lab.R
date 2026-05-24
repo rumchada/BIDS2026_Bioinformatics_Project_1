@@ -206,6 +206,8 @@ edgeR_diffexp <- function(dds_object, condition_col, ref_group_name) {
   # A model without an intercept term would only be recommended in cases where there is a strong biological reason why a zero covariate should be associated with a zero expression value (Law, et.al., F10000Research, 2020, PMID: 33604029)
   
   design <- model.matrix(~0+condition, data = y$samples)
+  conds <- gsub("^condition", "", colnames(design))
+  
   contrast_strings <- combn(conds, 2, FUN = function(x) paste0(x[1], "-", x[2]))
   
   
@@ -304,4 +306,125 @@ volcano_plot <- function(diffexp_df,
   return(list(volcano_df, volplot))
 }
 
+
+#unpacks enrichGO results, converts them to the user's desired gene IDs, then aligns them to their log2fc results
+
+enrichgo_unpack_ver2 <- function(intial_table = filtered_results$`healthy-covid19`, 
+                                 key_table = enrichgo_results$`healthy-covid19`,
+                                 chosen_desc,
+                                 #assume user does not want to convert geneids
+                                 #arguments below are for the conversion helperfunction
+                                 convert = TRUE,
+                                 from_type = "ensembl",
+                                 to_type = "symbol",
+                                 ensembl_dataset = "hsapiens_gene_ensembl"){
+  
+  
+  
+  # Loop will be placed here.
+  cluster <- tibble(key@result) %>%
+    dplyr::filter(str_detect(Description, chosen_desc)) %>%
+    dplyr::mutate(Description = as.character(Description))
+  cluster
+  
+  
+  ### helper functionf or converting geneidA to geneidB
+  ### user
+  gene_id_converter <- function(vector, from_type, to_type, ensembl_dataset){
+    library(biomaRt)
+    # geneid pulling for correct attribute
+    id_map <- c(
+      ensembl = "ensembl_gene_id",
+      entrez  = "entrezgene_id",
+      symbol  = "external_gene_name"
+    )
+    # p
+    from_attr <- id_map[[from_type]]
+    to_attr <-id_map[[to_type]]
+    
+    ensembl <- useMart(biomart = "ensembl", dataset = ensembl_dataset)
+    
+    return_df <- getBM( attributes = c(from_attr, to_attr), filters = from_attr, values = vector, mart = ensembl
+    )
+    return(return_df)
+    
+  }
+  
+  ###creates a helper function to unlist and strsplits the enriched Gene IDs per term
+  unlist_converter <- function(str) {
+    if (grepl("^ENSG|\\d", str)){
+      bruh <- as.character(unlist(strsplit(str, "/")))
+    }else{
+      bruh <- as.integer(unlist(strsplit(str, "/")))
+    }
+    return(bruh)
+  }
+  
+  #apply this function to the geneID column
+  extract_result <- lapply(cluster$geneID, unlist_converter)
+  #Next check the length of the new vector to see if it matches the Count column in the GSEA DF.
+  length(extract_result[[1]])
+  
+  #create an empty vector
+  path_vector <- c()
+  #for each index in the first column of numbers
+  for (i in seq_along(cluster$Description)) {
+    #replicate the name of the Description for the length of the GO term in column 1
+    path_vector <- c(path_vector, rep(cluster$Description[i], length(extract_result[[i]])))
+  }
+  
+  # make new tibble that pairs the name of the Pathway from the GOTerm and enriched Entrez ID from the "post-processed" GeneID column
+  pathway_tibble <- tibble(gene_desc = path_vector, geneid = unlist(extract_result))
+  pathway_tibble
+  
+  if(convert == FALSE){
+    pathway_genenames <- pathway_tibble
+  }else{
+    pathway_genenames <- gene_id_converter(pathway_tibble$geneid, 
+                                           from_type = from_type,
+                                           to_type = to_type,
+                                           ensembl_dataset = ensembl_dataset)
+    
+    new_colname <- paste0(to_type,"_", "geneid")
+    pathway_genenames <- pathway_genenames %>%
+      rename(geneid = colnames(pathway_genenames)[1]) %>%
+      rename(new_colname = colnames(pathway_genenames)[2])
+  }
+  
+  
+  final_path_tibble <- inner_join(pathway_tibble, pathway_genenames, by = "geneid")
+  final_path_tibble <- final_path_tibble %>% mutate(geneid = as.character(geneid))
+  final_path_tibble
+  
+  
+  final_path_fc_tibble <- inner_join(final_path_tibble, initial_table, by = "geneid")
+  
+  fpfc_tibble <- final_path_fc_tibble %>%
+    relocate(new_colname, .after = geneid)
+  
+  return(fpfc_tibble)
+}
+
+
+### helper functionf or converting geneidA to geneidB
+### user
+gene_id_converter <- function(vector, from_type, to_type, ensembl_dataset){
+  library(biomaRt)
+  # geneid pulling for correct attribute
+  id_map <- c(
+    ensembl = "ensembl_gene_id",
+    entrez  = "entrezgene_id",
+    symbol  = "external_gene_name"
+  )
+  # p
+  from_attr <- id_map[[from_type]]
+  to_attr <-id_map[[to_type]]
+  
+  ensembl <- useMart(biomart = "ensembl", dataset = ensembl_dataset)
+  
+  return_df <- getBM( attributes = c(from_attr, to_attr), filters = from_attr, values = vector, mart = ensembl
+  )
+  return(return_df)
+  
+}
 
