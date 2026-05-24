@@ -23,11 +23,17 @@ source("Project_1_function_lab.R")
 
 ```{r}
 covid19_ds1 <- readRDS("./post_processed_data/gse202805_covid19_ds1.rds")
+covid19_ds2 <- readRDS("./post_processed_data/gse152641_covid19_ds2.rds")
+covid19_ds4 <- readRDS("./post_processed_data/gse227116_covid19_ds4.rds")
+```
+
+```{r}
+covid19_ds2@colData
 ```
 
 <https://olvtools.com/en/documents/edger>
 
-Perform EdgeR Differential Expression and plot a volcano plot for each condition comparison within the DDS object
+## Perform EdgeR Differential Expression and plot a volcano plot for each condition comparison within the DDS object
 
 ```{r}
 
@@ -41,6 +47,11 @@ ref_group_name = "healthy"
 # The use give the condition column from the metadata to make the test parameters
 # and the control group
 results_dds1 <- edgeR_diffexp(covid19_ds1, condition_col,  ref_group_name)
+results_dds2 <- edgeR_diffexp(covid19_ds2, condition_col, "Healthy")
+results_dds4 <- edgeR_diffexp(covid19_ds4, condition_col, ref_group_name)
+```
+
+```{r}
 
 # function starts here
 #create a list of 
@@ -51,6 +62,8 @@ names(volcano_results) <- names(results_dds1)
 for (i in seq_len(length(results_dds1))) {
   # use the volcano_plot_function
   # to filter through your differential expression results
+  
+  
   volcano_res <- volcano_plot(
     results_dds1[[i]],
     log2fc_thresh = 1,
@@ -60,24 +73,172 @@ for (i in seq_len(length(results_dds1))) {
     step = 5
   )
   
+  #saving_resulting plots and data
  volcano_results[[i]] <- list(
     
     data = volcano_res[[1]],
     
-    plot = volcano_res[[2]] +
+    vol_plot = volcano_res[[2]] +
       labs(title = glue("Volcano Plot: {names(results_dds1)[i]}"))
   )
 }
 
+initial_table <- covid19_ds1
+
 filtered_results = lapply(volcano_results , function(x) x$data)
+
 results_vol_plots <- lapply(volcano_results, function(x) x$plot)
+
+heatmap_function(initial_table, filtered_results)
+
+
 ```
 
 ```{r}
-results_vol_plots
+volcano_results
 ```
 
-Perform an EnrichGO
+Creating A Heatmap
+
+For each condition comparison
+
+Arrange for top 100 DEGs in within the differential expression matrix
+
+Pull those genes from the count matrices from the regular raw_count matrix
+
+level samples
+
+transpose –\> scale –\> transpose –\> Heatmap
+
+```{r}
+library(colorRamp2)
+library(ComplexHeatmap)
+
+initial_table <- covid19_ds1
+
+filtered_results = lapply(volcano_results , function(x) x$data)
+
+
+heatmap_function <- function(initial_table, table_list) {
+  
+  require(colorRamp2)
+  require(ComplexHeatmap)
+  
+  # Initialize the list to store heatmap objects
+  heatmap_list <- list()
+  
+  # Extract the raw count matrix once outside the loop for efficiency
+  # Assumes a SingleCellExperiment or SummarizedExperiment-like structure
+  expr_raw <- as.matrix(initial_table@assays@data$counts)
+  
+  # Loop through the list of filtered differential expression results
+  for (i in seq_along(table_list)) {
+    
+    # Grab the ith table
+    filtered_diff_exp_results <- table_list[[i]]
+    
+    # Split the names of the ctrl-treatment comparison
+    comparison_name <- names(table_list)[i]
+    ctrl_treatment <- strsplit(comparison_name, "-")[[1]]
+    #itemizing the names of the
+    ctrl_name      <- ctrl_treatment[1]
+    treatment_name <- ctrl_treatment[2]
+    
+    # Message tracking
+    message(glue::glue("Processing: {ctrl_name} vs {treatment_name}"))
+    
+    # Pull the differentially expressed gene IDs
+    diffexp_geneids <- as.character(filtered_diff_exp_results$geneid)
+    
+    # Filter the matrix for the target genes and matching sample columns
+    # Note: Added anchors to ensure exact suffix matching
+    col_pattern <- glue::glue("_{ctrl_name}$|_{treatment_name}$")
+    matching_cols <- grepl(col_pattern, colnames(expr_raw))
+    
+    expr <- expr_raw[diffexp_geneids, matching_cols, drop = FALSE]
+    
+    # Scaling and z-score normalizing the counts matrix
+    expr_z <- t(scale(t(expr)))
+    expr_z[is.na(expr_z)] <- 0
+    rownames(expr_z) <- rownames(expr)
+    colnames(expr_z) <- colnames(expr)
+    
+    # Gene ID conversion
+    conversion_table <- gene_id_converter(
+      rownames(expr_z), 
+      "ensembl", 
+      "symbol", 
+      "hsapiens_gene_ensembl"
+    )
+    
+    gene_map <- setNames(
+      conversion_table$external_gene_name,
+      conversion_table$ensembl_gene_id
+    )
+    
+    new_names <- gene_map[rownames(expr_z)]
+    
+    # Fallback to Ensembl ID if no symbol is found
+    rownames(expr_z) <- ifelse(is.na(new_names), rownames(expr_z), new_names)
+    
+    # Clustering data (Optional: ComplexHeatmap does this natively if cluster_rows = TRUE, 
+    # but kept if you intend to pass hclust objects explicitly)
+    gene_dist <- dist(expr_z)
+    gene_hclust <- hclust(gene_dist)
+    
+    # Define color palette
+    col_fun <- colorRamp2(c(-2, 0, 2), c("blue", "white", "red"))
+    
+    # Generate Heatmap object
+    p <- Heatmap(
+      expr_z, 
+      name            = "Z-score",
+      col             = col_fun,
+      cluster_columns = TRUE,     
+      cluster_rows    = TRUE, # To use your manual cluster, change to: cluster_rows = gene_hclust     
+      row_names_gp    = gpar(fontsize = 12),
+      column_title    = glue::glue("{ctrl_name} - {treatment_name} Diff Exp Genes")
+    )
+    
+    # Store the plot object into the initialized list
+    heatmap_list[[comparison_name]] <- p
+  }
+  
+  return(heatmap_list)
+}
+```
+
+```{r}
+
+diffexp_geneids <- as.character(c(filtered_diff_exp_results$geneid))
+
+expr <- as.matrix(covid19_ds1@assays@data$counts)
+
+expr <- expr[diffexp_geneids, grepl("_covid19$|_healthy$", colnames(expr)), drop=FALSE]
+
+
+
+expr_z <- t(scale(t(as.matrix(expr))))
+expr_z[is.na(expr_z)] <- 0
+# filtering for columns that are specific to that assay and differential expression result
+rownames(expr_z) <- rownames(expr)
+colnames(expr_z) <- colnames(expr)
+
+#clustering data
+gene_dist <- dist(expr_z)
+gene_hclust <- hclust(gene_dist)
+
+col_fun = colorRamp2(c(-2, 0, 2), c("blue", "white", "red"))
+p <- Heatmap(expr_z, 
+               name = "Z-score",
+               col = col_fun,
+               cluster_columns = TRUE,     
+               cluster_rows = TRUE,     
+               row_names_gp = gpar(fontsize = 12))
+p
+```
+
+# Perform an EnrichGO ORA
 
 ```{r}
 
@@ -95,10 +256,10 @@ for(i in seq_along(filtered_results)){
 }
 ```
 
-Inspect your enirchGO results
+# Inspect your enirchGO results
 
 ```{r}
-filtered_results$`healthy-covid19`
+enrichgo_results$`healthy-convalescent`@result
 ```
 
 Unpacking ORA from GO and align to your differential expression results for the input condition
@@ -129,3 +290,7 @@ unpacked_results <-  enrichgo_unpack_ver2(intial_table = intial_table,
                      to_type = "symbol",
                      ensembl_dataset = "hsapiens_gene_ensembl")
 ```
+
+To do list for unpacked results function
+
+1.  scale to a whole
