@@ -3,7 +3,7 @@ title: "Intra_Differential_Expression"
 output: html_document
 ---
 
-Read-In Libraries
+# Read-In Libraries
 
 ```{r, include =FALSE}
 library(tidyverse)
@@ -25,11 +25,14 @@ source("Project_1_function_lab.R")
 covid19_ds1 <- readRDS("./post_processed_data/gse202805_covid19_ds1.rds")
 covid19_ds2 <- readRDS("./post_processed_data/gse152641_covid19_ds2.rds")
 covid19_ds4 <- readRDS("./post_processed_data/gse227116_covid19_ds4.rds")
+covid19_ds124 <- readRDS("./post_processed_data/covid_dds_124.rds")
 ```
 
 <https://olvtools.com/en/documents/edger>
 
-## Perform EdgeR Differential Expression and plot a volcano plot for each condition comparison within the DDS object
+# Part2_Project 1 Intra Diffferential Expression of the DataSets
+
+### Perform EdgeR Differential Expression and plot a volcano plot for each condition comparison within the DDS object
 
 ```{r}
 
@@ -46,6 +49,8 @@ results_dds1 <- edgeR_diffexp(covid19_ds1, condition_col,  ref_group_name)
 results_dds2 <- edgeR_diffexp(covid19_ds2, condition_col, "Healthy")
 results_dds4 <- edgeR_diffexp(covid19_ds4, condition_col, ref_group_name)
 ```
+
+### Filtering Differential expression results by differential expression and pvalue
 
 ```{r}
 
@@ -65,7 +70,7 @@ for (i in seq_along(results_dds1)) {
   volcano_res <- volcano_plot(
     results_dds1[[i]],
     log2fc_thresh = 1,
-    p.val_thresh = 0.05,
+    p.val_thresh = 0.01,
     lower_xlim = -10,
     upper_xlim = 10,
     step = 5
@@ -83,14 +88,23 @@ for (i in seq_along(results_dds1)) {
 
   )
 }
+```
+
+```{r}
+# save the filtered Differential Expression Results
+filtered_results <- lapply(diffexp_results , function(x) x$data)
+#Plot the Heatmap of the Differential Expression Anaalysis
 heatmap_visuals <- heatmap_function(initial_table, filtered_results)
 ```
 
 ```{r}
-filtered_results <- lapply(diffexp_results , function(x) x$data)
-for(table in seq_along(filtered_results)){
-  
-}
+heatmap_visuals
+```
+
+### Perform enrichGO
+
+```{r}
+#saving visuals for Volcano plot
 results_vol_plots <- lapply(diffexp_results, function(x) x$vol_plot)
 
 
@@ -99,21 +113,70 @@ results_vol_plots <- lapply(diffexp_results, function(x) x$vol_plot)
 #Which pathways are overrepresented in my list of significant genes? 
 
 ora_output_up <- ora_enrichgo(
+  # Output of the differential expression results.
   filtered_results,
+  # Which Direction of the DEGs (Upregulated("up")/Down("down"))
   direction = "up",
+  #How strict do you want your DEGs entered into the ORA?
   log2fc_thresh = 1,
+   # what is the pval_thresh of the ORA
   pval_thresh = 0.05,
+  #How many terms do you wantv visualized in your dotplots?
   top_terms = 15
 )
 
 ora_output_down <- ora_enrichgo(
+  # Output of the differential expression results.
   filtered_results,
+  # Which Direction of the DEGs (Upregulated("up")/Down("down"))
   direction = "down",
+  #How strict do you want your DEGs entered into the ORA?
   log2fc_thresh = 1,
+  # what is the pval_thresh of the ORA
   pval_thresh = 0.05,
+  #How many terms do you wantv visualized in your dotplots?
   top_terms = 15
 )
 ```
+
+### Unpacking ORA from enrichGO
+
+Unpacking ORA from GO and align to your differential expression results for the input condition
+
+ORA only takes in significant DEGs Answers the question:
+
+**Which pathways are overrepresented in my list of significant genes?**
+
+```{r}
+# making a data table for each Description Term that is consider statistically significant within the context of the ORA
+
+initial_tables <- filtered_results
+
+key_down <- ora_output_down$enrichgo_results
+
+key_up <-ora_output_up$enrichgo_results
+  
+pval_adj_threshold <- 0.001
+
+unpacked_results_down <-  enrichgo_unpack_ver3(initial_table_list = initial_tables,
+                                                 key = key_down,
+                                                 pval_adj_threshold = 0.05,
+                                                 convert = FALSE,
+                                                 from_type = "ensembl",
+                                                 to_type = "symbol",
+                                                 ensembl_dataset = "hsapiens_gene_ensembl")
+
+unpacked_results_up <-  enrichgo_unpack_ver3(initial_table_list = initial_tables,
+                                                 key = key_up,
+                                                 pval_adj_threshold = 0.05,
+                                                 convert = FALSE,
+                                                 from_type = "ensembl",
+                                                 to_type = "symbol",
+                                                 ensembl_dataset = "hsapiens_gene_ensembl")
+
+```
+
+### Displaying All the Results
 
 ```{r}
 diffexp_results
@@ -123,174 +186,194 @@ ora_output_up
 ora_output_down
 ```
 
-# Inspect your enirchGO ORA results
+Heatmap of the Chosen GOTerms of the DownRegulated DEGs
 
-Unpacking ORA from GO and align to your differential expression results for the input condition
+immunoglobulin mediated immune response
 
-ORA only takes in significant DEGs Answers the question:
+B cell mediated immunity
 
-**Which pathways are overrepresented in my list of significant genes?**
+defense response to bacterium
+
+leukocyte migration
+
+humoral immune response
+
+mucosal immune response
 
 ```{r}
-enrichgo_unpack_ver3 <- function(
-                                    # Pass the whole list so we can grab comparisons
-                                    initial_table_list = filtered_results,
-                                    key = ora_output_down$enrichgo_results,
-                                    pval_adj_threshold = 0.001,
-                                    
-                                    # Assume user does not want to convert geneids
-                                    convert = FALSE,
-                                    from_type = "ensembl",
-                                    to_type = "symbol",
-                                    ensembl_dataset = "hsapiens_gene_ensembl"){
-  require(tibble)
-  require(dplyr)
-  
-  ### helper functionf or converting geneidA to geneidB
-  ### user
-  gene_id_converter <- function(vector, from_type, to_type, ensembl_dataset){
-    require(biomaRt)
-    # geneid pulling for correct attribute
-    id_map <- c(
-      ensembl = "ensembl_gene_id",
-      entrez  = "entrezgene_id",
-      symbol  = "external_gene_name"
-    )
-    # p
-    from_attr <- id_map[[from_type]]
-    to_attr <-id_map[[to_type]]
-    
-    ensembl <- useMart(biomart = "ensembl", dataset = ensembl_dataset)
-    
-    return_df <- getBM( attributes = c(from_attr, to_attr), filters = from_attr, values = vector, mart = ensembl
-    )
-    return(return_df)
-    
-  }
-  
-  ###creates a helper function to unlist and strsplits the enriched Gene IDs per term
-  unlist_converter <- function(str) {
-    if (grepl("^ENSG|\\d", str)){
-      bruh <- as.character(unlist(strsplit(str, "/")))
-    }else{
-      bruh <- as.integer(unlist(strsplit(str, "/")))
-    }
-    return(bruh)
-  }
+df1 <- unpacked_results_down$`healthy-covid19`$`immunoglobulin mediated immune response`
+df2 <-unpacked_results_down$`healthy-covid19`$`B cell mediated immunity`
+df3 <- unpacked_results_down$`healthy-covid19`$`antibacterial humoral response`
+df4 <- unpacked_results_down$`healthy-covid19`$`mucosal immune response`
+df5 <- unpacked_results_down$`healthy-covid19`$`antimicrobial humoral response`
 
+df_ora_filtered <- unique(bind_rows(df1, df2, df3, df4, df5), by = "gene_id")
+
+df_ora_filtered <- list(df_ora_filtered)
+names(df_ora_filtered) <- 'healthy-covid19'
+
+heatmap_function(initial_table, df_ora_filtered)
+```
+
+# Intergrated Dataset Differential Expression
+
+```{r}
+unique(covid19_ds124@colData$condition)
+```
+
+```{r}
+dds_object <- covid19_ds124 
+condition_col = "condition"
+ref_group_name = "healthy"
+results_dds124 <- edgeR_diffexp(covid19_ds124,
+                                condition_col,
+                                ref_group_name)
+```
+
+```{r}
+
+# 1. Initialize dataset-specific starting table
+initial_table_124 <- covid19_ds124
+
+# 2. Set up the list container for raw results
+diffexp_results_124 <- vector("list", length(results_dds124))
+names(diffexp_results_124) <- names(results_dds124)
+
+# 3. Process each comparison through the volcano function
+for (i in seq_along(results_dds124)) {
+
+  volcano_res <- volcano_plot(
+    results_dds124[[i]],
+    log2fc_thresh = 1,
+    p.val_thresh = 0.01,
+    lower_xlim = -10,
+    upper_xlim = 10,
+    step = 5
+  )
   
-  # FIX 2: Corrected the spelling typo here
-  unpacking_results <- list()
-  
-  # FIX 1: Loop over names(key) so 'comparison' is a valid character string identifier
-  for (comparison in names(key)) {
-    
-    # Safeguard check: If the comparison doesn't exist in the cluster results, skip
-    if (is.null(key[[comparison]])) next
-    
-    cluster <- tibble::as_tibble(key[[comparison]]@result) %>%
-      dplyr::mutate(Description = as.character(Description))
-    
-    if (!is.null(pval_adj_threshold)) {
-      significant_clusters <- cluster %>%
-        dplyr::filter(p.adjust < pval_adj_threshold)
-    } else {
-      significant_clusters <- cluster
-    }
-    
-    labeled_gene_lists <- list()
-    
-    # FIX 3: Pull the specific comparison dataframe from your filtered results list
-    current_initial_table <- initial_table_list[[comparison]] %>%
-      dplyr::mutate(geneid = as.character(geneid))
-    
-    # If there are no significant clusters, jump to saving the empty list or next comparison
-    if (nrow(significant_clusters) == 0) {
-      unpacking_results[[comparison]] <- labeled_gene_lists
-      next
-    }
-    
-    for (i in seq_len(nrow(significant_clusters))) {
-      
-      go_term <- significant_clusters$Description[i]
-      
-      # Extract genes for current GO term
-      genes <- unlist_converter(significant_clusters$geneID[i])
-      
-      pathway_tibble <- tibble::tibble(
-        gene_desc = rep(go_term, length(genes)), 
-        geneid = as.character(genes)
-      )
-      
-      if (convert == FALSE) {
-        pathway_genenames <- pathway_tibble
-      } else {
-        pathway_genenames <- gene_id_converter(
-          pathway_tibble$geneid,
-          from_type = from_type,
-          to_type = to_type,
-          ensembl_dataset = ensembl_dataset
-        )
-        
-        new_colname <- paste0(to_type, "_geneid")
-        
-        # FIX 4: Cleaner, bulletproof column renaming by position
-        colnames(pathway_genenames)[1] <- "geneid"
-        colnames(pathway_genenames)[2] <- new_colname
-      }
-      
-      # Join converted names
-      final_path_tibble <- dplyr::inner_join(pathway_tibble, pathway_genenames, by = "geneid") %>%
-        dplyr::mutate(geneid = as.character(geneid))
-      
-      # Join fold changes / statistics using our dynamically updated initial table
-      final_path_fc_tibble <- dplyr::inner_join(final_path_tibble, current_initial_table, by = "geneid")
-      
-      # Relocate converted gene column
-      if (convert == TRUE) {
-        fpfc_tibble <- final_path_fc_tibble %>% 
-          dplyr::relocate(dplyr::all_of(new_colname), .after = geneid)
-      } else {
-        fpfc_tibble <- final_path_fc_tibble
-      }
-      
-      # Store result under the GO Term name
-      labeled_gene_lists[[go_term]] <- fpfc_tibble
-    }
-    
-    # Store the list of terms into the master list under the Comparison name
-    unpacking_results[[comparison]] <- labeled_gene_lists
-  }
-  return(unpacking_results)
+  # Store both the data frame and the customized plot
+  diffexp_results_124[[i]] <- list(
+    data = volcano_res[[1]],
+    vol_plot = volcano_res[[2]] +
+      labs(title = glue::glue("Volcano Plot: {names(results_dds124)[i]}"))
+  )
 }
+
+# 4. Add the Datatables within a seperate variable for future parsing
+filtered_results_124 <- lapply(diffexp_results_124, function(x) x$data)
+
+# 5. Generating Heatmap for each comparison
+heatmap_visuals_124 <- heatmap_function(initial_table_124, filtered_results_124)
+```
+
+```{r}
+#saving visuals for Volcano plot
+results_vol_plots <- lapply(diffexp_results_124, function(x) x$vol_plot)
+
+
+#perform an EnrichGO ORA
+#ORA only takes in significant DEGs Answers the question:
+#Which pathways are overrepresented in my list of significant genes? 
+
+ora_output_up_124 <- ora_enrichgo(
+  # Output of the differential expression results.
+  filtered_results_124,
+  # Which Direction of the DEGs (Upregulated("up")/Down("down"))
+  direction = "up",
+  #How strict do you want your DEGs entered into the ORA?
+  log2fc_thresh = 1,
+   # what is the pval_thresh of the ORA
+  pval_thresh = 0.05,
+  #How many terms do you wantv visualized in your dotplots?
+  top_terms = 15
+)
+
+ora_output_down_124 <- ora_enrichgo(
+  # Output of the differential expression results.
+  filtered_results_124,
+  # Which Direction of the DEGs (Upregulated("up")/Down("down"))
+  direction = "down",
+  #How strict do you want your DEGs entered into the ORA?
+  log2fc_thresh = 1,
+  # what is the pval_thresh of the ORA
+  pval_thresh = 0.05,
+  #How many terms do you wantv visualized in your dotplots?
+  top_terms = 15
+)
 ```
 
 ```{r}
 # making a data table for each Description Term that is consider statistically significant within the context of the ORA
 
-initial_tables <- filtered_results
+initial_tables <- filtered_results_124
 
-key <- ora_output_down$enrichgo_results
+key_down <- ora_output_down_124$enrichgo_results
+
+key_up <-ora_output_up_124$enrichgo_results
   
 pval_adj_threshold <- 0.001
-#assume user does not want to convert geneids
-convert = FALSE
 
-from_type = "ensembl"
+unpacked_results_down <-  enrichgo_unpack_ver3(initial_table_list = initial_tables,
+                                                 key = key_down,
+                                                 pval_adj_threshold = 0.005,
+                                                 convert = FALSE,
+                                                 from_type = "ensembl",
+                                                 to_type = "symbol",
+                                                 ensembl_dataset = "hsapiens_gene_ensembl")
 
-to_type = "symbol"
+unpacked_results_up <-  enrichgo_unpack_ver3(initial_table_list = initial_tables,
+                                                 key = key_up,
+                                                 pval_adj_threshold = 0.005,
+                                                 convert = FALSE,
+                                                 from_type = "ensembl",
+                                                 to_type = "symbol",
+                                                 ensembl_dataset = "hsapiens_gene_ensembl")
 
-ensembl_dataset <- "hsapiens_gene_ensembl"
-
-unpacked_results <-  enrichgo_unpack_ver3(initial_table_list = initial_tables,
-                     key = key,
-                     pval_adj_threshold = 0.001,
-                     convert = FALSE,
-                     from_type = "ensembl",
-                     to_type = "symbol",
-                     ensembl_dataset = "hsapiens_gene_ensembl")
 ```
 
 ```{r}
-unpacked_results
+heatmap_visuals_124
+
+heatmap_folder <- "heatmap_images"
+
+
+if(!dir.exists(heatmap_folder)) dir.create(heatmap_folder, recursive = TRUE)
+
+
+for(h in seq_along(heatmap_visuals_124)){
+gg_patchwork(heatmap_visuals_124[[h]], 
+             glue("{heatmap_folder}/{names(heatmap_visuals_124)[h]}.png"),
+             width = 10,
+             height = 20)
+}
+```
+
+```{r}
+results_vol_plots
+```
+
+```{r}
+ora_output_up_124$enrichgo_visuals
+ora_output_down_124$enirchgo_visuals
+
+```
+
+```{r}
+
+ora_output_down_124 <- ora_enrichgo(
+  # Output of the differential expression results.
+  filtered_results_124,
+  # Which Direction of the DEGs (Upregulated("up")/Down("down"))
+  direction = "down",
+  #How strict do you want your DEGs entered into the ORA?
+  log2fc_thresh = 1,
+  # what is the pval_thresh of the ORA
+  pval_thresh = 0.05,
+  #How many terms do you wantv visualized in your dotplots?
+  top_terms = 15
+)
+```
+
+```{r}
+ora_output_down_124
 ```

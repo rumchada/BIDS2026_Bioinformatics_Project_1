@@ -350,6 +350,7 @@ enrichgo_unpack_ver2 <- function(intial_table = filtered_results$`healthy-covid1
     
   }
   
+  
   ###creates a helper function to unlist and strsplits the enriched Gene IDs per term
   unlist_converter <- function(str) {
     if (grepl("^ENSG|\\d", str)){
@@ -405,7 +406,6 @@ enrichgo_unpack_ver2 <- function(intial_table = filtered_results$`healthy-covid1
   return(fpfc_tibble)
 }
 
-
 ### helper functionf or converting geneidA to geneidB
 ### user
 gene_id_converter <- function(vector, from_type, to_type, ensembl_dataset){
@@ -422,11 +422,95 @@ gene_id_converter <- function(vector, from_type, to_type, ensembl_dataset){
   
   ensembl <- useMart(biomart = "ensembl", dataset = ensembl_dataset)
   
-  return_df <- getBM( attributes = c(from_attr, to_attr), filters = from_attr, values = vector, mart = ensembl
+  return_df <- getBM( 
+    attributes = c(from_attr, to_attr), 
+    filters = from_attr, 
+    values = vector,
+    mart = ensembl
   )
   return(return_df)
   
 }
+
+gene_id_converter_ver2 <- function(vector, from_type, to_type, ensembl_datset){
+  require(biomaRt)
+  # geneid pulling for correct attribute
+  id_map <- c(
+    ensembl = "ensembl_gene_id",
+    entrez  = "entrezgene_id",
+    symbol  = "external_gene_name"
+  )
+  # Pass the the ID mapping index over to the new attribute string
+  from_attr <- id_map[[from_type]]
+  to_attr <-id_map[[to_type]]
+  
+  #initialize the return and parameters
+  #baseline NULL intialization
+  return_df <- NULL
+  max_attempts <- 10
+  attempt <- 1
+  org_db <- org.Hs.eg.db
+  
+  
+  #Fix 1: There is a huge API crash almost 50% of the time that I use getBM() function to connect to the API
+  #Implementing a while loop/tryCatch function to loop API calls just in case that the getBM work
+  #Solution:After 10 attempts,
+  
+  #while the current attemp is less than or equal to the max attempts and while the return DF is null
+  while(attempt <= max_attempts && is.null(return_df)){
+    return_df <- tryCatch({
+      
+      message(sprintf("biomaRt attempt %d of %d...", attempt, max_attempts))
+      
+      #call the getBM ensemble API
+      ensembl <- useMart(biomart = "ensembl", dataset = ensembl_dataset)
+      getBM( attributes = c(from_attr, to_attr), filters = from_attr, values = vector, mart = ensembl)
+      
+      #If there is any kind of error
+    }, error=function(e){
+      #message for that error
+      message(sprintf("  -> biomaRt attempt %d failed: %s", attempt, trimws(e$message)))
+      #Return a NULL DF
+      return(NULL)
+    })
+    
+    # During that current attempt, If the return_df is still null
+    if (is.null(return_df)) {
+      # add on the attempt counter
+      attempt <- attempt + 1
+      # If the attempt counter is still less than the max attempts
+      if (attempt <= max_attempts) {
+        Sys.sleep(2) # Brief pause to prevent hammering the server
+      }
+    }# end of second if statement
+  }#end of while loop
+  
+  if(is.null(return_df)){
+    dbi_map <- c(
+      ensembl = "ENSEMBL",
+      entrez  = "ENTREZID",
+      symbol  = "SYMBOL"
+    )
+    
+    dbi_from <- dbi_map[[from_type]]
+    dbi_to   <- dbi_map[[to_type]]
+    
+    return_df <- AnnotationDbi::mapIds(org_db, 
+                                       keys = vector,
+                                       keytype = dbi_from,
+                                       column =   dbi_to,
+                                       multiVals = "first")
+    
+    return_df <- data.frame(
+      from_attr = names(return_df),
+      to_attr = unname(return_df))
+    
+    colnames(return_df) <- c(from_attr, to_attr)
+  }
+  return(return_df)
+}#end of whole function
+
+
 
 heatmap_function <- function(initial_table, table_list) {
   
@@ -440,11 +524,20 @@ heatmap_function <- function(initial_table, table_list) {
   # Assumes a SingleCellExperiment or SummarizedExperiment-like structure
   expr_raw <- as.matrix(initial_table@assays@data$counts)
   
+  #Early stopping points just in case
+  if (any(is.na(colnames(expr_raw)))) stop("NA column names in expr_raw")
+  if (any(duplicated(colnames(expr_raw)))) stop("Duplicate column names in expr_raw")
+  
   # Loop through the list of filtered differential expression results
   for (i in seq_along(table_list)) {
     
     # Grab the ith table
     filtered_diff_exp_results <- table_list[[i]]
+    
+    if (!"geneid" %in% colnames(filtered_diff_exp_results)) {
+      stop(glue::glue("Missing geneid column in {names(table_list)[i]}"))
+      print(colnames(filtered_diff_exp_results))
+    }
     
     # Split the names of the ctrl-treatment comparison
     comparison_name <- names(table_list)[i]
@@ -452,9 +545,10 @@ heatmap_function <- function(initial_table, table_list) {
     #itemizing the names of the
     ctrl_name      <- ctrl_treatment[1]
     treatment_name <- ctrl_treatment[2]
-    
     # Message tracking
     message(glue::glue("Processing: {ctrl_name} vs {treatment_name}"))
+    
+    
     
     # Pull the differentially expressed gene IDs
     diffexp_geneids <- as.character(filtered_diff_exp_results$geneid)
@@ -464,7 +558,27 @@ heatmap_function <- function(initial_table, table_list) {
     col_pattern <- glue::glue("_{ctrl_name}$|_{treatment_name}$")
     matching_cols <- grepl(col_pattern, colnames(expr_raw))
     
-    expr <- expr_raw[diffexp_geneids, matching_cols, drop = FALSE]
+    expr <- expr_raw[unique(diffexp_geneids), matching_cols, drop = FALSE]
+    
+    #Important: Validating Gene Matching between raw_matrix and the
+    
+    genes_found <- diffexp_geneids %in% rownames(expr_raw)
+    
+    if (sum(genes_found) == 0) {
+      stop(glue::glue(
+        "No DE genes found in expression matrix for {comparison_name}"
+      ))
+    }
+    
+    if (sum(genes_found) < length(diffexp_geneids) * 0.5) {
+      warning(glue::glue(
+        "Less than 50% of DE genes found in matrix for {comparison_name}"
+      ))
+    }
+    # Overwritting the unvalidated expr matriz for matched significant DEGs
+    expr <- expr_raw[unique(diffexp_geneids[genes_found]), matching_cols, drop = FALSE]
+    
+    
     
     # Scaling and z-score normalizing the counts matrix
     expr_z <- t(scale(t(expr)))
@@ -473,7 +587,11 @@ heatmap_function <- function(initial_table, table_list) {
     colnames(expr_z) <- colnames(expr)
     
     # Gene ID conversion
-    conversion_table <- gene_id_converter(
+    #Quality check of the number of DEGs matched from raw_expr table that were z-scaled
+    message(glue("Comparison:{ctrl_name} vs {treatment_name} has {nrow(expr_z)} DEGs"))
+    
+    
+    conversion_table <- gene_id_converter_ver2(
       rownames(expr_z), 
       "ensembl", 
       "symbol", 
@@ -498,6 +616,15 @@ heatmap_function <- function(initial_table, table_list) {
     # Define color palette
     col_fun <- colorRamp2(c(-2, 0, 2), c("blue", "white", "red"))
     
+    # THIS IS A RISKY MOVE BUT IT WILL MAKE THE HEATMAP A LOT CLEANER
+    # PROS: IT WILL MAKE THE HEATMAP CLEANER
+    # CONS: IT MAY REMOVE BIOLOGICAL SIGNAL FOR A GENE: COULD BE EXPLAINED BY WARIANTS OF THE SAME GENE
+    expr_z <- expr_z[!duplicated(rownames(expr_z)), ]
+    
+    # Gene ID conversion
+    #Quality check of the number of DEGs matched from raw_expr table that were z-scaled
+    message(glue("Comparison:{ctrl_name} vs {treatment_name} has {nrow(expr_z)} UNIQUE DEGs"))
+    
     # Generate Heatmap object
     p <- Heatmap(
       expr_z, 
@@ -506,6 +633,7 @@ heatmap_function <- function(initial_table, table_list) {
       cluster_columns = TRUE,     
       cluster_rows    = TRUE, # To use your manual cluster, change to: cluster_rows = gene_hclust     
       row_names_gp    = gpar(fontsize = 12),
+      row_gap         = unit(5, "mm"),
       column_title    = glue::glue("{ctrl_name} - {treatment_name} Diff Exp Genes")
     )
     
@@ -638,6 +766,8 @@ ora_enrichgo <- function(filtered_results,
   ))
 }
 
+
+
 enrichgo_unpack_ver3 <- function(
     # Pass the whole list so we can grab comparisons
   initial_table_list = filtered_results,
@@ -674,6 +804,8 @@ enrichgo_unpack_ver3 <- function(
     
   }
   
+
+
   ###creates a helper function to unlist and strsplits the enriched Gene IDs per term
   unlist_converter <- function(str) {
     if (grepl("^ENSG|\\d", str)){
@@ -768,6 +900,23 @@ enrichgo_unpack_ver3 <- function(
     unpacking_results[[comparison]] <- labeled_gene_lists
   }
   return(unpacking_results)
+}
+
+
+
+
+
+#Rendering Patchwork Images bypassing R Windows
+#Helper function used to render the spatial feature plots and bypass RStudip window contrainsts
+gg_patchwork <- function(plot, filename, width = 8, height = 6, dpi = 300, ...) {
+  if (!grepl("\\.png$", filename, ignore.case = TRUE)) {
+    filename <- paste0(filename, ".png")
+  }
+  # Open a device and print the plot explicitly to bypass RStudio window constraints
+  grDevices::png(filename, width = width, height = height, units = "in", res = dpi)
+  print(plot)  # works for ggplot OR patchwork
+  dev.off()
+  message("Saved: ", normalizePath(filename))
 }
 
 

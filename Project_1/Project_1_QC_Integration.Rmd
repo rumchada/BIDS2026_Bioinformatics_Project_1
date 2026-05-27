@@ -237,9 +237,13 @@ covid19_ds1@colData$condition <- covid19_ds1@colData$condition %>% tolower()
 covid19_ds2@colData$condition <- covid19_ds2@colData$condition %>% tolower()
 covid19_ds3@colData$condition <- covid19_ds3@colData$condition %>% tolower() %>% gsub("-", "", .)
 
+covid19_ds4@colData$condition <- covid19_ds4@colData$condition %>% tolower()
+
+
 unique(as.data.frame(covid19_ds1@colData)$condition)
 unique(as.data.frame(covid19_ds2@colData)$condition) 
 unique(as.data.frame(covid19_ds3@colData)$condition)
+unique(as.data.frame(covid19_ds4@colData)$condition)
 ```
 
 ### Subsetting for shared genes IDs within each object
@@ -448,27 +452,49 @@ Subset by Disease States leaving only two conditions 'covid19' and healthy\
 Checking average_zero inflation per sample per dataset
 
 ```{r}
+# 1. Create the diagnostic table base
 diagnostic_table <- data.frame(
-    average_zero_cnt = colMeans(filtered_counts == 0)
-  )
+  average_zero_cnt = colMeans(filtered_counts == 0)
+)
 
+# 2. Process strings and metadata
 diagnostic_table <- diagnostic_table %>%
-    rownames_to_column("sample_info") %>%
-    separate(sample_info, into = c("sample", "condition"), sep = "_(?=[^_]+$)") %>%
-  # replacing variation of condition names to covid19
-    mutate(condition = ifelse(
-            grepl("(COVID-19$|COVID19$)", condition),
-            "covid19",
-            condition)) %>%
-    mutate(ds_origin = as.factor(shared_metadata$ds_origin))
+  tibble::rownames_to_column("sample_info") %>%
+  tidyr::separate(sample_info, into = c("sample", "condition"), sep = "_(?=[^_]+$)") %>%
+  
+  # Replacing variations of condition names to covid19
+  dplyr::mutate(condition = ifelse(
+    grepl("(COVID-19$|COVID19$)", condition, ignore.case = TRUE),
+    "covid19",
+    condition
+  )) %>%
+  
+  # FIX: Corrected typo from 'mutat' to 'mutate'
+  dplyr::mutate(condition = ifelse(
+    grepl("Healthy", condition, ignore.case = TRUE),
+    "healthy",
+    condition
+  )) %>% 
+  
+  # Note: Assumes shared_metadata alignment matches diagnostic_table row order
+  dplyr::mutate(ds_origin = as.factor(shared_metadata$ds_origin))
 
+# 3. Create the boxplot
 boxplot_zero_cnt <- diagnostic_table %>%
-  ggplot() +
-  aes(x = ds_origin, y = average_zero_cnt, fill = condition) +
+  ggplot(aes(x = ds_origin, y = average_zero_cnt, fill = condition)) +
   geom_boxplot() +
   ylab("mean_zero_cnt_per_sample")
 
+# Display plot
 boxplot_zero_cnt
 ```
 
 Tried Limma and Manual Batch correction all of them did worse than combat-seq
+
+```{r}
+saveRDS(corrected_int_data,"./post_processed_data/covid_dds_124.rds")
+```
+
+```{r}
+unique(corrected_int_data@colData$condition)
+```
