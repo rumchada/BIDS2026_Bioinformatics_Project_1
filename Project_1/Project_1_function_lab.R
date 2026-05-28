@@ -247,9 +247,8 @@ edgeR_diffexp <- function(dds_object, condition_col, ref_group_name) {
 # Volcano Plot Visualizations
 volcano_plot <- function(diffexp_df, 
                          #data-alterations
-                         unique = FALSE,
                          log2fc_thresh = 0,
-                         p.val_thresh = 0.05,
+                         p.val_adj_thresh = 0.05,
                          #visual parts
                          lower_xlim = -5, 
                          upper_xlim = 5, 
@@ -261,11 +260,14 @@ volcano_plot <- function(diffexp_df,
 volcano_df <- diffexp_df %>%
     mutate(
       color = case_when(
-        p.val_adj < p.val_thresh & log2foldchange >  log2fc_thresh  ~ "Upregulated",
-        p.val_adj < p.val_thresh & log2foldchange < -log2fc_thresh  ~ "Downregulated",
+        p.val_adj < p.val_adj_thresh & log2foldchange >  log2fc_thresh  ~ "Upregulated",
+        p.val_adj < p.val_adj_thresh & log2foldchange < -log2fc_thresh  ~ "Downregulated",
         TRUE ~ "Not Significant"
       )
     )
+
+deg_df <- volcano_df %>%
+  filter(color != "Not Significant")
   
   
   volplot <- ggplot(volcano_df) +
@@ -303,7 +305,7 @@ volcano_df <- diffexp_df %>%
       breaks = seq(lower_xlim, upper_xlim, step)
     )
   
-  return(list(volcano_df, volplot))
+  return(list(deg_df, volplot))
 }
 
 
@@ -551,18 +553,14 @@ heatmap_function <- function(initial_table, table_list) {
     
     
     # Pull the differentially expressed gene IDs
-    diffexp_geneids <- as.character(filtered_diff_exp_results$geneid)
+    diffexp_geneids <- unique(as.character(filtered_diff_exp_results$geneid))
     
-    # Filter the matrix for the target genes and matching sample columns
-    # Note: Added anchors to ensure exact suffix matching
-    col_pattern <- glue::glue("_{ctrl_name}$|_{treatment_name}$")
-    matching_cols <- grepl(col_pattern, colnames(expr_raw))
-    
-    expr <- expr_raw[unique(diffexp_geneids), matching_cols, drop = FALSE]
-    
-    #Important: Validating Gene Matching between raw_matrix and the
+    print(length(diffexp_geneids))
     
     genes_found <- diffexp_geneids %in% rownames(expr_raw)
+    
+    validated_geneids <- diffexp_geneids[genes_found]
+    
     
     if (sum(genes_found) == 0) {
       stop(glue::glue(
@@ -575,10 +573,15 @@ heatmap_function <- function(initial_table, table_list) {
         "Less than 50% of DE genes found in matrix for {comparison_name}"
       ))
     }
-    # Overwritting the unvalidated expr matriz for matched significant DEGs
-    expr <- expr_raw[unique(diffexp_geneids[genes_found]), matching_cols, drop = FALSE]
     
+    # Filter the matrix for the target genes and matching sample columns
+    # Note: Added anchors to ensure exact suffix matching
+    col_pattern <- glue::glue("_{ctrl_name}$|_{treatment_name}$")
+    matching_cols <- grepl(col_pattern, colnames(expr_raw))
     
+    expr <- expr_raw[validated_geneids, matching_cols, drop = FALSE]
+    
+    message(glue("Comparison:{ctrl_name} vs {treatment_name} has {nrow(expr)} DEGs"))
     
     # Scaling and z-score normalizing the counts matrix
     expr_z <- t(scale(t(expr)))
@@ -608,9 +611,12 @@ heatmap_function <- function(initial_table, table_list) {
     # Fallback to Ensembl ID if no symbol is found
     rownames(expr_z) <- ifelse(is.na(new_names), rownames(expr_z), new_names)
     
+    print(sum(is.na(expr_z)))
+    
     # Clustering data (Optional: ComplexHeatmap does this natively if cluster_rows = TRUE, 
     # but kept if you intend to pass hclust objects explicitly)
     gene_dist <- dist(expr_z)
+    print(sum(is.na(gene_dist)))
     gene_hclust <- hclust(gene_dist)
     
     # Define color palette

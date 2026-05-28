@@ -94,8 +94,9 @@ plot_total_counts(covid19_ds1) +
   
 plot_total_counts(covid19_ds2) + 
   labs(title = "gse227116 / COVID-19 DS2 library sizes")
-plot_total_counts(covid19_ds3) + 
-  labs(title = "gse161731 / COVID-19 DS3 library sizes")
+
+plot_total_counts(covid19_ds4) + 
+  labs(title = "gse152641 / COVID-19 DS4 library sizes")
 ```
 
 ## Library Complexity
@@ -108,7 +109,7 @@ GSE20285:
 
 Starting with major outlier on the left, this shows us that 50% of counts within that sample contains less than 0.01.% of the genes within the homo-sapien reference genome used fro alignment. This what is known as low complexity sample/library. This would mean that very little known genes probably around 100 out of thousands are being seen within the total amounts of reads within that sample.
 
-Our main cluster of libraries: Looks like we have a healthy amount of healthy amount of variation across all libraries. For almost all of the samples, 50% of the counts account for the first 10% of the reads and flatten out around the 50% of genes at 95% of the counts within the majority of the libraries.
+Our main cluster of libraries: Looks like we have a healthy amount of variation across all libraries. For almost all of the samples, 50% of the counts account for the first 10% of the reads and flatten out around the 50% of genes at 95% of the counts within the majority of the libraries.
 
 A general rule for grading library complexity is to find the intersection at 50% of the reads counted.
 
@@ -119,8 +120,8 @@ plot_library_complexity(covid19_ds1) +
 plot_library_complexity(covid19_ds2) + 
   labs(title = "gse227116 / COVID-19 DS2 library complexity")
 
-plot_library_complexity(covid19_ds3) + 
-  labs(title = "gse161731 / COVID-19 DS3 library complexity")
+plot_library_complexity(covid19_ds4) + 
+  labs(title = "gse152641/ COVID-19 DS3 library complexity")
 ```
 
 **Library complexity is only one component of sequencing saturation. It is also dependent on the sequencing depth: the total number of reads the machine produced per sample**
@@ -143,8 +144,53 @@ plot_gene_detection(covid19_ds1) +
 plot_gene_detection(covid19_ds2) + 
   labs(title = "gse227116 / COVID-19 DS2 gene detection")
 
-plot_gene_detection(covid19_ds3) + 
-  labs(title = "gse161731 / COVID-19 DS3 gene detection")
+plot_gene_detection(covid19_ds4) + 
+  labs(title = "gse152641 / COVID-19 DS3 gene detection")
+```
+
+## Boxplot of Normalized Counts (Pre-Filtering)
+
+```{r}
+log_norm_cnts <- covid19_ds1@assays@data$log_counts
+
+metadata <- covid19_ds1@colData
+
+# 1. Create the diagnostic table base
+#calculating the average
+diagnostic_table <- data.frame(
+  average_zero_cnt = colMeans(log_norm_cnts == 0)
+)
+
+# 2. Process strings and metadata
+diagnostic_table <- diagnostic_table %>%
+  tibble::rownames_to_column("sample_info") %>%
+  tidyr::separate(sample_info, into = c("sample", "condition"), sep = "_(?=[^_]+$)") %>%
+  
+  # Replacing variations of condition names to covid19
+  dplyr::mutate(condition = ifelse(
+    grepl("(COVID-19$|COVID19$)", condition, ignore.case = TRUE),
+    "covid19",
+    condition
+  )) %>%
+  
+  # FIX: Corrected typo from 'mutat' to 'mutate'
+  dplyr::mutate(condition = ifelse(
+    grepl("Healthy", condition, ignore.case = TRUE),
+    "healthy",
+    condition
+  )) %>% 
+  
+  # Note: Assumes shared_metadata alignment matches diagnostic_table row order
+  dplyr::mutate(condition = as.factor(metadata))
+
+# 3. Create the boxplot
+boxplot_zero_cnt <- diagnostic_table %>%
+  ggplot(aes(x = condition, y = average_zero_cnt, fill = condition)) +
+  geom_boxplot() +
+  ylab("mean_zero_cnt_per_sample")
+
+# Display plot
+boxplot_zero_cnt
 ```
 
 ## **DimReduction Section for Intra-DataSet Profiling**
