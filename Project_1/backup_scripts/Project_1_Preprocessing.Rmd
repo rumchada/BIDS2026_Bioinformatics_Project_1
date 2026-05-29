@@ -1,0 +1,862 @@
+---
+title: "Project_1"
+output: html_document
+---
+
+Source Challenge: <https://github.com/mitreac/BIDS2026_projects>
+
+```{r, include = FALSE}
+library(tidyverse)
+library(devtools)
+library(GEOquery)
+library(vroom)
+library(biomaRt)
+library(dplyr)
+library(org.Hs.eg.db)
+library(DESeq2)
+library(clusterProfiler)
+library(RNAseqQC)
+```
+
+## Reading in GSE202805 file
+
+80 Samples:
+
+Platform: Illumina HiSeq 4000 (Homo sapiens)
+
+Case Groups: 4 acute-Mild, 6 Acute Moderate, 32 Acute-Severe, 28 Covalescent
+
+Control Groups: 10 healthy controls
+
+Total:
+
+```{r}
+gse_202805 <- getGEO("GSE202805", GSEMatrix = TRUE)
+
+gse_202805 <- gse_202805[[1]]
+
+expr_202805 <- exprs(gse_202805)
+
+meta_202805 <- pData(gse_202805)
+
+head(expr_202805)
+head(meta_202805)
+
+getGEOSuppFiles("GSE202805")
+```
+
+```{r}
+path <- "./GSE202805/GSE202805_genecounts_20220406.txt.gz"
+
+counts <- read.delim(gzfile(path))
+
+colnames(counts) <- sub("\\.bam$", "", colnames(counts))
+
+counts <- counts %>% dplyr::select(-c(Chr, Start, End, Strand, Length))
+```
+
+```{r}
+meta_data <- meta_202805
+meta_data
+meta_data <- meta_data %>%
+  rownames_to_column(var = "samples") %>%
+  dplyr::select(samples, title, characteristics_ch1) %>%
+  mutate(characteristics_ch1 = gsub("group:", "", characteristics_ch1)) %>%
+  dplyr::select(-c(samples))
+
+mapping <- c(meta_data$characteristics_ch1)
+names(mapping) <- meta_data$title
+
+colnames(counts) <- mapping[colnames(counts)] 
+
+colnames(counts) <- paste(names(mapping), colnames(counts), sep = "_")
+
+colnames(counts)[1] <- "geneid"
+
+
+# Character Specific Clean Up
+counts$geneid <- gsub("\\..*", "", counts$geneid)
+colnames(counts) <- gsub(" ", "", colnames(counts))
+
+# So this is a crucial part to remember lol is that acute-covid19, convalescant covid
+#added waay late into the game after first round of harmonization and integration
+colnames(counts) <- gsub("acute", "covid19", colnames(counts))
+
+# MetaData construction
+metadata <- data.frame(
+  sample = colnames(counts),
+  condition = dplyr::case_when(
+    grepl("_covid19$", colnames(counts)) ~ "covid19",
+    grepl("_convalescent$", colnames(counts)) ~ "convalescent",
+    grepl("healthy$", colnames(counts)) ~ "healthy",
+    TRUE ~ NA_character_
+  )
+) %>% slice(., 2:nrow(.))
+```
+
+```{r}
+# summarizing replicated genes across all samples
+counts <- counts %>%
+  group_by(geneid) %>%
+  summarise(across(where(is.numeric), sum))
+
+counts <- counts %>% column_to_rownames(var = "geneid")
+
+```
+
+```{r}
+counts
+```
+
+```{r}
+# Unflitered Counts Saved to a DeSeqDataSet (dds object)
+covid19_ds1 <- make_dds(counts = counts , metadata = metadata, ah_record = "AH89426")
+#renaming counts to raw counts
+assayNames(covid19_ds1)[1] <- "counts"
+
+#variance stabilized Raw counts
+assays(covid19_ds1)[[2]] <- vst(covid19_ds1@assays@data$counts)
+assayNames(covid19_ds1)[2] <- "var_stable"
+#log_transformed (log normalized counts)
+assays(covid19_ds1)[[3]] <- log10(covid19_ds1@assays@data$counts + 1)
+assayNames(covid19_ds1)[3] <- "log_counts"
+```
+
+```{r}
+colData(covid19_ds1)
+```
+
+```{r}
+saveRDS(covid19_ds1, "./post_processed_data/gse202805_covid19_ds1.rds")
+```
+
+```{r}
+plot_total_counts(covid19_ds1)
+plot_library_complexity(covid19_ds1)
+plot_gene_detection(covid19_ds1)
+```
+
+```{r}
+head(rowData(covid19_ds1))
+```
+
+```{r}
+plot_biotypes
+plot_biotypes(covid19_ds1)
+```
+
+## Reading in GSE152641
+
+65 blood Samples recoved form 46 COVID-19 convalescent patients and 10 healthy donors were analyzed by RNA- Sequencing
+
+Platform:: NovaSeq 6000
+
+10 healthd donors, 65 blood samples.
+
+```{r}
+gse_227116 <- getGEO("GSE152641", GSEMatrix = TRUE)
+gse_227116 <- gse_227116[[1]]
+
+expr_227116 <- exprs(gse_227116)
+meta_227116 <- pData(gse_227116)
+
+head(expr_227116)
+head(meta_227116)
+
+getGEOSuppFiles("GSE152641")
+```
+
+```{r}
+meta_227116
+```
+
+```{r}
+library(glue)
+warned <- FALSE
+acc_num <- "GSE152641"
+
+url_ds2 <- "https://www.ncbi.nlm.nih.gov/geo/download/?format=file&type=rnaseq_counts"
+path_ds2 <- paste(url_ds2, glue("acc={acc_num}"), glue("file={acc_num}_raw_counts_GRCh38.p13_NCBI.tsv.gz"), sep="&");
+
+
+
+tbl_ds2 <- tryCatch(
+
+  {
+    as.matrix(data.table::fread(path_ds2, header=T, colClasses="integer"), rownames=1) %>% as.data.frame()
+  },
+
+  warning = function(w){
+
+    message("Initial call unsuccessful. Using local GEO file.")
+
+    path_ds2 <- list.files(acc_num,recursive = TRUE,full.names = TRUE)[1]
+
+    as.matrix(data.table::fread(path_ds2, header=T, colClasses="integer"), rownames=1) %>% as.data.frame()
+  }
+
+)
+```
+
+```{r}
+# cleaning the meta_data
+meta_227116 <- meta_227116 %>%
+            rename("condition" = "disease:ch1") %>%
+            dplyr::mutate(condition = gsub("control", "", condition)) %>% 
+            dplyr::mutate(condition = trimws(condition)) %>%
+            dplyr::mutate(condition = gsub("s$","", condition)) %>%
+            dplyr::select(geo_accession,
+                          "age:ch1", 
+                          condition, 
+                          "Sex:ch1")
+
+colnames(meta_227116) <- sub(":.*", "", colnames(meta_227116))
+
+
+#Mapping sample to the Condition
+mapping <- c(meta_227116$condition)
+names(mapping) <- meta_227116$geo_accession
+colnames(tbl_ds2) <- names(mapping)
+
+new_names <- paste(colnames(tbl_ds2), mapping, sep = "_")
+colnames(tbl_ds2) <- new_names
+```
+
+```{r}
+
+tbl_ds2 <- rownames_to_column(tbl_ds2, "geneid")
+
+# Summarizing the repeated geneids
+tbl_ds2 <- tbl_ds2 %>%
+  group_by(geneid) %>%
+  summarise(across(where(is.numeric), sum))
+
+nrow(tbl_ds2)
+# converting entrezids  to ensemblids
+
+
+# Iterative conversion function
+# arguments:input, from, to, iterations, species
+
+#managig RAM Space on a 16Gb vector limit 
+rm(expr_227116, gse_227116)
+```
+
+```{r}
+tbl_ds2
+```
+
+# Total genes ids after summarization and concatentation of gene counts : 39,376
+
+function layers
+
+1.  mapIds from AnnotationDbi
+2.  getBM from cluster Profiler
+3.  bitr from clusterProfiler
+4.  gconvert from g:Profiler
+
+```{r}
+
+
+# initial args
+from_type <- "ENTREZ"
+
+to_type <- "ENSEMBL"
+
+org_db <- org.Hs.eg.db
+
+# Harmoizing between each of the available annotation functions
+harmonizer <- list(
+    ENTREZ = list(local = "ENTREZID", biomart = "entrezgene_id", gconvert = "ENTREZGENE_ACC"),
+    ENSEMBL = list(local = "ENSEMBL",  biomart = "ensembl_gene_id", gconvert = "ENSG"),
+    SYMBOL  = list(local = "SYMBOL",   biomart = "external_gene_name",
+                   gconvert = "SYMBOL")
+  )
+
+local_from   <- harmonizer[[from_type]]$local
+local_to     <- harmonizer[[to_type]]$local
+  
+biomart_from <- harmonizer[[from_type]]$biomart
+biomart_to   <- harmonizer[[to_type]]$biomart
+
+
+# enter mapping
+input_ids <- tbl_ds2$geneid
+
+unique_ids <- unique(input_ids)
+
+
+#Intialize final results
+unique_ids_len <- length(unique_ids)
+
+final_results <- c(replicate(unique_ids_len, NA))
+
+names(final_results) <- unique_ids
+```
+
+# GeneID Conversions for Object
+
+```{r}
+#Converting EntrezIDs into Symbols
+id_chunks <- split(unique_ids, ceiling(seq_along(unique_ids) / 10000))
+
+for(i in seq_along(id_chunks)){
+  chunk_map <- AnnotationDbi::mapIds(org_db, 
+                      keys = id_chunks[[i]],
+                      keytype = local_from,
+                      column =   local_to,
+                      multiVals = "first")
+  #updating the inital final results
+  final_results[names(chunk_map)] <- chunk_map
+}
+
+final_results <- unlist(final_results)
+missing_ids <- names(final_results)[is.na(final_results)]
+length(missing_ids)
+
+
+
+if (length(missing_ids) > 0){
+  
+      layer2 <- getBM(
+        attributes = c(biomart_from, biomart_to),
+        filters = biomart_from,
+        values = missing_ids,
+        mart = useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+      )
+      layer2
+  if(nrow(layer2) > 0) {
+    indices <- match(layer2[[biomart_from]], names(final_results))
+    final_results[indices] <- layer2[[biomart_to]]
+  }
+}
+
+missing_ids <- names(final_results)[is.na(final_results)]
+length(missing_ids)
+```
+
+Is it possible to get the converted symbols into ensemble IDS in totality?
+
+If this works then we can use multiple dbs on the symbols as a universal token
+
+then convert them all back to Ensemble IDs
+
+match their ENTREZID index back to the symbols then boom
+
+we now have a totally converted list of ENTREZ –\> Symbol –\> ENSEMBL pipeline
+
+Journal Note:
+
+I'd rather have this project done and posted than trying to perfect the
+
+Although it was a good try it's likely that those missing 1092X gene are ncRNA or tRNA and not protein coding GENEs
+
+Important Note Down: Resulting dds object for bulk transcriptomic data of the second data set will not have all genes. 10,925 will be missing because the ENSEMBL IDS were not available.
+
+If there is someone out there that can convert those remaining 10,925
+
+```{r}
+mapping_df <- data.frame(geneid = names(final_results),
+                         ensembl_id = as.character(final_results))
+
+final_tbl_ds2 <- tbl_ds2 %>% 
+  left_join(., mapping_df, by = "geneid") %>%
+  dplyr::relocate(ensembl_id, .after = "geneid")
+
+#Slicing Rows with any NAs within the Data
+final_tbl_ds2 <- final_tbl_ds2[complete.cases(final_tbl_ds2),]
+
+
+final_tbl_ds2 <- final_tbl_ds2 %>%
+    group_by(ensembl_id) %>%
+    summarise(across(where(is.numeric), sum)) %>%
+    column_to_rownames(var = "ensembl_id")
+
+#final edits of the metadata
+meta_227116$samples <- paste0(meta_227116$geo_accession, "_", meta_227116$condition)
+
+
+rownames(meta_227116) <- meta_227116$samples
+
+meta_227116 <- meta_227116 %>% dplyr::select(-c(samples))
+meta_227116
+```
+
+```{r}
+# Unflitered Counts Saved to a DeSeqDataSet (dds object)
+covid19_ds2 <- make_dds(counts = final_tbl_ds2 , metadata = meta_227116, ah_record = "AH89426")
+#renaming counts to raw counts
+assayNames(covid19_ds2)[1] <- "counts"
+
+#variance stabilized Raw counts
+assays(covid19_ds2)[[2]] <- vst(covid19_ds2@assays@data$counts)
+assayNames(covid19_ds2)[2] <- "var_stable"
+#log_transformed (log normalized counts)
+assays(covid19_ds2)[[3]] <- log10(covid19_ds2@assays@data$counts + 1)
+assayNames(covid19_ds2)[3] <- "log_counts"
+```
+
+```{r}
+dim(covid19_ds2@assays@data$counts)
+```
+
+```{r}
+saveRDS(covid19_ds2, "./post_processed_data/gse152641_covid19_ds2.rds")
+```
+
+```{r}
+plot_total_counts(covid19_ds2)
+plot_library_complexity(covid19_ds2)
+plot_gene_detection(covid19_ds2)
+plot_biotypes(covid19_ds2)
+```
+
+# Reading in GSE161731
+
+Illumina NovaSeq 6000 (Homo sapiens)
+
+46 individuals with PCR positive, sympomatic COVID-19, 14 were sampled at multiple time points
+
+(early ≤10 days, middle 11-21 days, late \>21 days)
+
+tissue()
+
+**Categorical severity of Healthy and COVID-19 patients**
+
+59 = acute respiratory infection
+
+17 = Influenza
+
+20 = bacterial pneumonia
+
+19 = healthy controls
+
+```{r}
+gse_161731 <- getGEO("GSE161731", GSEMatrix = TRUE)
+gse_161731 <- gse_161731[[1]]
+
+expr_161731 <- exprs(gse_161731)
+meta_161731<- pData(gse_161731)
+
+head(expr_161731)
+head(meta_161731)
+
+getGEOSuppFiles("GSE161731")
+```
+
+```{r}
+urld_ds3 <- "https://www.ncbi.nlm.nih.gov/geo/download/?format=file&type=rnaseq_counts"
+path_ds3 <- paste(urld_ds3, "acc=GSE161731", "file=GSE161731_raw_counts_GRCh38.p13_NCBI.tsv.gz", sep="&");
+tbl_ds3 <- as.data.frame(as.matrix(data.table::fread(path_ds3, header=T, colClasses="integer"), rownames=1))
+```
+
+Pre-Cleaning Meta.Data
+
+```{r}
+View(meta_161731)
+```
+
+|     |
+|:----|
+|     |
+
+```{r}
+meta_161731_edit <- meta_161731 %>%
+  
+  mutate(characteristics_ch1.1 = gsub(">|<", "", characteristics_ch1.1)) %>%
+  mutate(characteristics_ch1.1 = gsub("age: ", "", characteristics_ch1.1)) %>%
+  mutate(age = as.integer(characteristics_ch1.1)) %>%
+  
+  # Gender
+  mutate(characteristics_ch1.2 = gsub("gender: ", "", characteristics_ch1.2)) %>%
+  rename(gender = characteristics_ch1.2) %>%
+  
+  # Race
+  mutate(characteristics_ch1.3 = gsub("race: ", "", characteristics_ch1.3)) %>%
+  rename(race = characteristics_ch1.3) %>%
+  
+  # Cohort
+  mutate(characteristics_ch1.4 = gsub("cohort: ", "", characteristics_ch1.4)) %>%
+  rename(condition = characteristics_ch1.4) %>%
+  
+  # Hospitalized
+  mutate(characteristics_ch1.6 = gsub("hospitalized: ", "", characteristics_ch1.6)) %>%
+  rename(hospitalized = characteristics_ch1.6) %>%
+  
+  # Tissue
+  mutate(characteristics_ch1.7 = gsub("tissue: ", "", characteristics_ch1.7)) %>%
+  rename(tissue = characteristics_ch1.7) %>%
+  
+  mutate(characteristics_ch1.8 = gsub("batch: ", "", characteristics_ch1.8)) %>%
+  rename(batch_num = characteristics_ch1.8) %>%
+  
+  #time collected, making it a longitudinal study
+  mutate(characteristics_ch1.5 = gsub("time_since_onset: ", "", characteristics_ch1.5)) %>%
+  rename(time_point = characteristics_ch1.5) %>%
+  
+ # dplyr::filter(time_point %in% 'NA') %>%
+
+  dplyr::filter(description != 'excluded from analyses for poor data quality') %>%
+  
+  # Batch (Converted to Integer)
+  dplyr::select(geo_accession, gender, race, condition, batch_num, age, time_point)
+
+meta_161731_edit
+```
+
+### Mapping Sample Name to Condition
+
+```{r}
+#Mapping sample to the Condition
+mapping <- meta_161731_edit$condition
+names(mapping) <- meta_161731_edit$geo_accession
+new_names <- paste(colnames(tbl_ds3), mapping, sep = "_")
+colnames(tbl_ds3) <- new_names
+tbl_ds3 <- rownames_to_column(tbl_ds3, "geneid")
+tbl_ds3
+```
+
+```{r}
+length(colnames(tbl_ds3))
+```
+
+```{r}
+# initial args
+from_type <- "ENTREZ"
+
+to_type <- "ENSEMBL"
+
+org_db <- org.Hs.eg.db
+
+# Harmoizing between each of the available annotation functions
+harmonizer <- list(
+    ENTREZ = list(local = "ENTREZID", biomart = "entrezgene_id", gconvert = "ENTREZGENE_ACC"),
+    ENSEMBL = list(local = "ENSEMBL",  biomart = "ensembl_gene_id", gconvert = "ENSG"),
+    SYMBOL  = list(local = "SYMBOL",   biomart = "external_gene_name",
+                   gconvert = "SYMBOL")
+  )
+
+local_from   <- harmonizer[[from_type]]$local
+local_to     <- harmonizer[[to_type]]$local
+  
+biomart_from <- harmonizer[[from_type]]$biomart
+biomart_to   <- harmonizer[[to_type]]$biomart
+
+
+
+
+unique_ids <- unique(tbl_ds3$geneid)
+
+
+#Intialize final results
+unique_ids_len <- length(unique_ids)
+
+final_results <- c(replicate(unique_ids_len, NA))
+
+names(final_results) <- unique_ids
+
+#Converting EntrezIDs into Symbols
+id_chunks <- split(unique_ids, ceiling(seq_along(unique_ids) / 10000))
+
+for(i in seq_along(id_chunks)){
+  chunk_map <- AnnotationDbi::mapIds(org_db, 
+                      keys = id_chunks[[i]],
+                      keytype = local_from,
+                      column =   local_to,
+                      multiVals = "first")
+  #updating the inital final results
+  final_results[names(chunk_map)] <- chunk_map
+}
+
+
+
+#Converting EntrezIDs into Symbols
+id_chunks <- split(unique_ids, ceiling(seq_along(unique_ids) / 10000))
+
+for(i in seq_along(id_chunks)){
+  chunk_map <- AnnotationDbi::mapIds(org_db, 
+                      keys = id_chunks[[i]],
+                      keytype = local_from,
+                      column =   local_to,
+                      multiVals = "first")
+  #updating the inital final results
+  final_results[names(chunk_map)] <- chunk_map
+}
+
+final_results <- unlist(final_results)
+missing_ids <- names(final_results)[is.na(final_results)]
+length(missing_ids)
+
+
+
+if (length(missing_ids) > 0){
+  
+      layer2 <- getBM(
+        attributes = c(biomart_from, biomart_to),
+        filters = biomart_from,
+        values = missing_ids,
+        mart = useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+      )
+      layer2
+  if(nrow(layer2) > 0) {
+    indices <- match(layer2[[biomart_from]], names(final_results))
+    final_results[indices] <- layer2[[biomart_to]]
+  }
+}
+
+missing_ids <- names(final_results)[is.na(final_results)]
+length(missing_ids)
+
+mapping_df <- data.frame(geneid = names(final_results),
+                         ensembl_id = as.character(final_results))
+
+final_tbl_ds3 <- tbl_ds3 %>% 
+  left_join(., mapping_df, by = "geneid") %>%
+  dplyr::relocate(ensembl_id, .after = "geneid")
+
+#Slicing Rows with any NAs within the Data
+final_tbl_ds3 <- final_tbl_ds3[complete.cases(final_tbl_ds3),]
+
+
+final_tbl_ds3 <- final_tbl_ds3 %>%
+    group_by(ensembl_id) %>%
+    summarise(across(where(is.numeric), sum)) %>%
+    column_to_rownames(var = "ensembl_id")
+```
+
+```{r}
+#final meta_data editing
+meta_161731_edit$samples <- paste0(meta_161731_edit$geo_accession, "_", meta_161731_edit$condition)
+meta_161731_edit <- meta_161731_edit %>% 
+  relocate(samples, .after = geo_accession) %>% 
+  dplyr::select(samples, gender, race, condition, batch_num, age) %>%
+  separate(samples, 
+           into = c("sample_id", "condition"),
+           sep = "_")
+rownames(meta_161731_edit) <- NULL
+```
+
+```{r}
+meta_161731_edit
+```
+
+```{r}
+# Unflitered Counts Saved to a DeSeqDataSet (dds object)
+covid19_ds3 <- make_dds(counts = final_tbl_ds3 , metadata = meta_161731_edit, ah_record = "AH89426")
+#renaming counts to raw counts
+assayNames(covid19_ds3)[1] <- "counts"
+
+#variance stabilized Raw counts
+assays(covid19_ds3)[[2]] <- vst(covid19_ds3@assays@data$counts)
+assayNames(covid19_ds3)[2] <- "var_stable"
+
+#log_transformed (log normalized counts)
+assays(covid19_ds3)[[3]] <- log10(covid19_ds3@assays@data$counts + 1)
+assayNames(covid19_ds3)[3] <- "log_counts"
+```
+
+```{r}
+saveRDS(covid19_ds3, "./post_processed_data/gse161731_covid19_ds3.rds")
+```
+
+# Reading in GSE227116
+
+```{r}
+gse_227116 <- getGEO("GSE227116", GSEMatrix = TRUE)
+
+gse_227116 <- gse_227116[[1]]
+
+expr_227116 <- exprs(gse_227116)
+
+meta_227116 <- pData(gse_227116)
+
+head(expr_227116)
+head(meta_227116)
+
+getGEOSuppFiles("GSE227116")
+```
+
+```{r}
+library(glue)
+warned <- FALSE
+acc_num <- "GSE227116"
+
+url_ds4 <- "https://www.ncbi.nlm.nih.gov/geo/download/?format=file&type=rnaseq_counts"
+
+path_ds4 <- paste(url_ds4, glue("acc={acc_num}"), glue("file={acc_num}_raw_counts_GRCh38.p13_NCBI.tsv.gz"), sep="&");
+
+
+
+tbl_ds4 <- tryCatch(
+
+  {
+    as.matrix(data.table::fread(path_ds4, header=T, colClasses="integer"), rownames=1) %>% as.data.frame()
+  },
+
+  warning = function(w){
+
+    message("Initial call unsuccessful. Using local GEO file.")
+
+    path_ds4 <- list.files(acc_num , recursive = TRUE , full.names = TRUE)[1]
+
+    as.matrix(data.table::fread(path_ds4, header=T, colClasses="integer"), rownames=1) %>% as.data.frame()
+  }
+
+)
+```
+
+```{r}
+meta_227116
+```
+
+```{r}
+meta_227116_edit <- meta_227116 %>% 
+  rename(condition = `status:ch1`) %>% 
+  mutate(
+    condition = tolower(condition),
+    condition = gsub("covid-19", "", condition),
+    condition = trimws(condition),
+    condition = gsub("s$", "", condition)
+  ) %>%
+  mutate(samples = paste0(geo_accession, "_", condition)) %>% 
+  dplyr::select(geo_accession, samples, "time point:ch1", condition) %>%
+  rename(time_point = "time point:ch1")
+rownames(meta_227116_edit) <- meta_227116_edit$samples
+```
+
+```{r}
+mapping <- rownames(meta_227116_edit)
+names(mapping) <- colnames(tbl_ds4)
+colnames(tbl_ds4) <- mapping
+tbl_ds4 <- rownames_to_column(tbl_ds4,"geneid")
+```
+
+```{r}
+# initial args
+from_type <- "ENTREZ"
+
+to_type <- "ENSEMBL"
+
+org_db <- org.Hs.eg.db
+
+# Harmoizing between each of the available annotation functions
+harmonizer <- list(
+    ENTREZ = list(local = "ENTREZID", biomart = "entrezgene_id", gconvert = "ENTREZGENE_ACC"),
+    ENSEMBL = list(local = "ENSEMBL",  biomart = "ensembl_gene_id", gconvert = "ENSG"),
+    SYMBOL  = list(local = "SYMBOL",   biomart = "external_gene_name",
+                   gconvert = "SYMBOL")
+  )
+
+local_from   <- harmonizer[[from_type]]$local
+local_to     <- harmonizer[[to_type]]$local
+  
+biomart_from <- harmonizer[[from_type]]$biomart
+biomart_to   <- harmonizer[[to_type]]$biomart
+
+
+
+
+unique_ids <- unique(tbl_ds4$geneid)
+
+
+#Intialize final results
+unique_ids_len <- length(unique_ids)
+
+final_results <- c(replicate(unique_ids_len, NA))
+
+names(final_results) <- unique_ids
+
+#Converting EntrezIDs into Symbols
+id_chunks <- split(unique_ids, ceiling(seq_along(unique_ids) / 10000))
+
+for(i in seq_along(id_chunks)){
+  chunk_map <- AnnotationDbi::mapIds(org_db, 
+                      keys = id_chunks[[i]],
+                      keytype = local_from,
+                      column =   local_to,
+                      multiVals = "first")
+  #updating the inital final results
+  final_results[names(chunk_map)] <- chunk_map
+}
+
+
+
+#Converting EntrezIDs into Symbols
+id_chunks <- split(unique_ids, ceiling(seq_along(unique_ids) / 10000))
+
+for(i in seq_along(id_chunks)){
+  chunk_map <- AnnotationDbi::mapIds(org_db, 
+                      keys = id_chunks[[i]],
+                      keytype = local_from,
+                      column =   local_to,
+                      multiVals = "first")
+  #updating the inital final results
+  final_results[names(chunk_map)] <- chunk_map
+}
+
+final_results <- unlist(final_results)
+missing_ids <- names(final_results)[is.na(final_results)]
+length(missing_ids)
+
+
+
+if (length(missing_ids) > 0){
+  
+      layer2 <- getBM(
+        attributes = c(biomart_from, biomart_to),
+        filters = biomart_from,
+        values = missing_ids,
+        mart = useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+      )
+      layer2
+  if(nrow(layer2) > 0) {
+    indices <- match(layer2[[biomart_from]], names(final_results))
+    final_results[indices] <- layer2[[biomart_to]]
+  }
+}
+
+missing_ids <- names(final_results)[is.na(final_results)]
+length(missing_ids)
+
+mapping_df <- data.frame(geneid = names(final_results),
+                         ensembl_id = as.character(final_results))
+
+final_tbl_ds4 <- tbl_ds4 %>% 
+  left_join(., mapping_df, by = "geneid") %>%
+  dplyr::relocate(ensembl_id, .after = "geneid")
+
+#Slicing Rows with any NAs within the Data
+final_tbl_ds4 <- final_tbl_ds4[complete.cases(final_tbl_ds4),]
+
+
+final_tbl_ds4 <- final_tbl_ds4 %>%
+    group_by(ensembl_id) %>%
+    summarise(across(where(is.numeric), sum)) %>%
+    column_to_rownames(var = "ensembl_id")
+```
+
+```{r}
+meta_227116_edit <- meta_227116_edit %>% 
+  relocate(samples, .after = geo_accession) %>% 
+  separate(samples, 
+           into = c("sample_id", "condition"),
+           sep = "_")
+```
+
+```{r}
+covid19_ds4 <- make_dds(final_tbl_ds4, metadata = meta_227116_edit, ah_record = "AH89426")
+#renaming counts to raw counts
+assayNames(covid19_ds4)[1] <- "counts"
+
+#variance stabilized Raw counts
+assays(covid19_ds4)[[2]] <- vst(covid19_ds4@assays@data$counts)
+assayNames(covid19_ds4)[2] <- "var_stable"
+
+#log_transformed (log normalized counts)
+assays(covid19_ds4)[[3]] <- log10(covid19_ds4@assays@data$counts + 1)
+assayNames(covid19_ds4)[3] <- "log_counts"
+```
+
+```{r}
+saveRDS(covid19_ds4, "./post_processed_data/gse227116_covid19_ds4.rds")
+```
