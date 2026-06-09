@@ -13,4 +13,4 @@ Integrating public transcriptomic datasets can significantly increase statistica
 
 Full Report: https://docs.google.com/document/d/1uim9RasXxoO3295lwEbxGl3ulQ5_RE0F/edit?usp=sharing&ouid=103061418032486391880&rtpof=true&sd=true
 
-Small Changes will be made: Feel free to leave sugestions in the Issue tab
+Small Changes will be made: Feel free to leave sugestions in the Issues tab
