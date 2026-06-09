@@ -1,9 +1,15 @@
 ---
 title: "Intra_Differential_Expression"
-output: html_document
+output:
+  pdf_document: default
+  html_document: default
 ---
 
 # Read-In Libraries
+
+```{r}
+start.time <- Sys.time()
+```
 
 ```{r, include =FALSE}
 library(tidyverse)
@@ -24,14 +30,33 @@ source("Project_1_function_lab.R")
 ```{r}
 covid19_ds1 <- readRDS("./post_processed_data/gse202805_covid19_ds1.rds")
 covid19_ds2 <- readRDS("./post_processed_data/gse152641_covid19_ds2.rds")
+covid19_ds3 <- readRDS("./post_processed_data/gse161731_covid19_ds3.rds")
 covid19_ds4 <- readRDS("./post_processed_data/gse227116_covid19_ds4.rds")
-covid19_ds124 <- readRDS("./post_processed_data/covid_dds_124.rds")
+covid19_ds5 <- readRDS("./post_processed_data/gse152418_covid19_ds5.rds")
+
+covid19_dsint <- readRDS("./post_processed_data/covid_dds_12345.rds")
 
 
 # Adding DataSet Moniceurs
 colData(covid19_ds1)$ds_origin <- "GSE202805"
 colData(covid19_ds2)$ds_origin <- "GSE152641"
+colData(covid19_ds3)$ds_origin <- "GSE161731"
 colData(covid19_ds4)$ds_origin <- "GSE227116"
+colData(covid19_ds5)$ds_origin <- "GSE152418"
+```
+
+```{r}
+covid19_ds1@colData$condition <- covid19_ds1@colData$condition %>% tolower()
+covid19_ds2@colData$condition <- covid19_ds2@colData$condition %>% tolower()
+covid19_ds3@colData$condition <- covid19_ds3@colData$condition %>% tolower() %>% gsub("-", "",.) %>% as.factor()
+
+covid19_ds4@colData$condition <- covid19_ds4@colData$condition %>% tolower()
+
+covid19_ds5@colData$condition <- covid19_ds5@colData$condition %>% tolower() %>% gsub("-", "",.)
+```
+
+```{r}
+levels(covid19_ds3@colData$condition)
 ```
 
 <https://olvtools.com/en/documents/edger>
@@ -52,177 +77,26 @@ ref_group_name = "healthy"
 # The use give the condition column from the metadata to make the test parameters
 # and the control group
 results_dds1 <- edgeR_diffexp(covid19_ds1, condition_col,  ref_group_name)
-results_dds2 <- edgeR_diffexp(covid19_ds2, condition_col, "Healthy")
+results_dds2 <- edgeR_diffexp(covid19_ds2, condition_col, ref_group_name)
+results_dds3 <- edgeR_diffexp(covid19_ds3, condition_col, ref_group_name)
 results_dds4 <- edgeR_diffexp(covid19_ds4, condition_col, ref_group_name)
+results_dds5 <- edgeR_diffexp(covid19_ds5, condition_col, ref_group_name)
 ```
 
-### Filtering Differential expression results by differential expression and pvalue
+# **Covid-19 DS1 GSE202805 Downstream Analaysis**
 
-```{r}
-require(glue)
+```{r, include=FALSE}
 
-
-# function starts here
-#create a list of arg
-dds_object <- covid19_ds2
-
-edgeR_results <- results_dds2
-
-#controls the intial filtering of DEGs directly after the edgeR differential expression
-deg_log2fc_thresh <- 1
-
-#controls the intial p.val thresh of DEGs directly after the edgeR differential expression
-deg_pval_adj_thresh <- 0.05
-
-# controls the volcano plot's lower x-axis limit on the image
-vol_plot_lower_xlim <- -10
-
-#controls the volcano plot's upper x-axis limit on the image
-volcano_plot_upper_xlim <- 10
-
-# ticker step of the plot on both x and y axis
-cartesian_step <- 5
-
-#over-representation test pvalue threshold
-ora_pval_adj_threshold <- 0.05
-
-
-#save vector the length of the edgeR results with comparisons
-diffexp_results <- vector("list", length(edgeR_results))
-names(diffexp_results) <- names(edgeR_results)
-
-# for each comparison
-for (i in seq_along(edgeR_results)) {
-
-  volcano_res <- volcano_plot(
-    edgeR_results[[i]],
-    log2fc_thresh = deg_log2fc_thresh,
-    p.val_adj_thresh = deg_pval_adj_thresh,
-    lower_xlim = vol_plot_lower_xlim,
-    upper_xlim = volcano_plot_upper_xlim,
-    step = cartesian_step
-  )
-  #for each comparison within the edgeR diff exp analysis
-  # this function will save the filtered DEG table
-  
-  #save directly to the initialized vector
-  diffexp_results[[i]] <- list(
-    #saving the first subcript content of the volcano_res function
-    data = volcano_res[[1]],
-
-    vol_plot = volcano_res[[2]] +
-      labs(title = glue::glue(
-        "Volcano Plot: {names(edgeR_results)[i]}"
-      ))
-
-  )
-}
-
-# save the filtered Differential Expression Results
-filtered_results <- lapply(diffexp_results , function(x) x$data)
-
-#report for each comparison the number of up and down regulated DEGS
-for(i in seq_along(filtered_results)){
-  
-  num_sig_up_degs <- unique(filtered_results[[i]]$geneid[filtered_results[[i]]$log2foldchange > deg_log2fc_thresh & filtered_results[[i]]$p.val_adj < deg_pval_adj_thresh])
-  
-  num_sig_down_degs <-unique(filtered_results[[i]]$geneid[filtered_results[[i]]$log2foldchange < -deg_log2fc_thresh & filtered_results[[i]]$p.val_adj < deg_pval_adj_thresh])
-  
-  total <- length(num_sig_down_degs) + length(num_sig_up_degs)
-  
-  message(
-    glue(
-      "Within Dataset {unique(colData(dds_object)$ds_origin)}, ",
-      "Comparison: {names(filtered_results)[i]} has ",
-      "{length(num_sig_up_degs)} significantly up-regulated DEGs and ",
-      "{length(num_sig_down_degs)} down-regulated DEGs",
-      "Making a total of {total} DEGS"
-    )
-  )
-}
-
-
-#Plot the Heatmap of the Differential Expression Anaalysis
-heatmap_visuals <- heatmap_function(dds_object, filtered_results)
-
-
-#saving visuals for Volcano plot
-results_vol_plots <- lapply(diffexp_results, function(x) x$vol_plot)
-
-
-#perform an EnrichGO ORA
-#ORA only takes in significant DEGs Answers the question:
-#Which pathways are overrepresented in my list of significant genes? 
-
-ora_output_up <- ora_enrichgo(
-  # Output of the differential expression results.
-  filtered_results,
-  # Which Direction of the DEGs (Upregulated("up")/Down("down"))
-  direction = "up",
-  #How strict do you want your DEGs entered into the ORA?
-  log2fc_thresh = deg_log2fc_thresh,
-   # what is the pval_thresh of the ORA
-  pval_thresh = ora_pval_adj_threshold,
-  #How many terms do you wantv visualized in your dotplots?
-  top_terms = 15
-)
-
-ora_output_down <- ora_enrichgo(
-  # Output of the differential expression results.
-  filtered_results,
-  # Which Direction of the DEGs (Upregulated("up")/Down("down"))
-  direction = "down",
-  #How strict do you want your DEGs entered into the ORA?
-  log2fc_thresh = deg_log2fc_thresh,
-  # what is the pval_thresh of the ORA
-  pval_thresh = ora_pval_adj_threshold,
-  #How many terms do you wantv visualized in your dotplots?
-  top_terms = 15
-)
-
-#Unpacking ORA from enrichGO
-
-#Unpacking ORA from GO and align to your differential expression results for the input condition
-
-#ORA only takes in significant DEGs Answers the question:
-
-#Which pathways are overrepresented in my list of significant genes?
-
-
-# making a data table for each Description Term that is consider statistically significant within the context of the ORA
-
-significant_degs <- filtered_results
-
-key_down <- ora_output_down$enrichgo_results
-
-key_up <-ora_output_up$enrichgo_results
-  
-
-unpacked_results_down <-  enrichgo_unpack_ver3(initial_table_list = significant_degs,
-                                                 key = key_down,
-                                                 pval_adj_threshold = ora_pval_adj_threshold,
-                                                 convert = FALSE,
-                                                 from_type = "ensembl",
-                                                 to_type = "symbol",
-                                                 ensembl_dataset = "hsapiens_gene_ensembl")
-
-unpacked_results_up <-  enrichgo_unpack_ver3(initial_table_list = significant_degs,
-                                                 key = key_up,
-                                                 pval_adj_threshold = ora_pval_adj_threshold,
-                                                 convert = FALSE,
-                                                 from_type = "ensembl",
-                                                 to_type = "symbol",
-                                                 ensembl_dataset = "hsapiens_gene_ensembl")
-```
-
-### Displaying All the Results
-
-```{r}
-diffexp_results
-filtered_results
-heatmap_visuals
-ora_output_up
-ora_output_down
+covid19_ds1_analysis <- run_de_pipeline(
+                                        covid19_ds1, 
+                                        results_dds1,
+                                        deg_log2fc_thresh = 1, 
+                                        deg_pval_adj_thresh = 0.05, 
+                                        vol_plot_lower_xlim = -10, 
+                                        vol_plot_upper_xlim = 10, 
+                                        cartesian_step = 5, 
+                                        ora_pval_adj_threshold = 0.05)
+#saveRDS(covid19_ds1_analysis, "./downstream_results/covid_ds1_gse202805")
 ```
 
 ### **Covid-19 DS1 GSE202805 significant DEGs abs(log2fc) \> 1 and pval_adj \< 0.05**
@@ -245,169 +119,212 @@ Upregulated: 535 Sig up
 
 Downregulated: 87
 
+### Displaying All the Results
+
+```{r}
+covid19_ds1_analysis$volcano_plots
+covid19_ds1_analysis$heatmap
+covid19_ds1_analysis$ora_down_raw$enrichgo_visuals
+covid19_ds1_analysis$ora_up_raw$enrichgo_visuals
+```
+
+# **Covid-19 DS2 GSE**152641 **Downstream Analysis**
+
+```{r}
+covid19_ds2_analysis <- run_de_pipeline(covid19_ds2, 
+                                        results_dds2,
+                                        deg_log2fc_thresh = 1, 
+                                        deg_pval_adj_thresh = 0.05, 
+                                        vol_plot_lower_xlim = -10, 
+                                        vol_plot_upper_xlim = 10, 
+                                        cartesian_step = 5, 
+                                        ora_pval_adj_threshold = 0.05)
+```
+
+```{r}
+#saveRDS(covid19_ds1_analysis, "./downstream_results/covid_ds2_gse152641")
+```
+
 ### Covid-19 DS2 GSE152641 **significant DEGs abs(log2fc) \> 1 and pval_adj \< 0.05**
 
 **Healthy-covid19: #DEGs total = 591**
 
-UpRegulated: 112 sig up
+**UpRegulated: 112 sig up**
 
-Downregulated: 479 sig down
+**Downregulated: 479 sig down**
 
-# Healthy vs COVID-19 Comparisons
-
-Covid-19 Dataset 1 (GSE202805) top over-represented pathways by p-values of hypergeometric test
+### Displaying All the Results
 
 ```{r}
-df1_ds1 <- unpacked_results_down$`healthy-covid19`$`immunoglobulin mediated immune response`
-df2_ds1 <- unpacked_results_down$`healthy-covid19`$`B cell mediated immunity`
-df3_ds1 <- unpacked_results_down$`healthy-covid19`$`antibacterial humoral response`
-df4_ds1 <- unpacked_results_down$`healthy-covid19`$`mucosal immune response`
-df5_ds1 <- unpacked_results_down$`healthy-covid19`$`antimicrobial humoral response`
-
-df_ora_filtered <- unique(bind_rows(df1_ds1, df2_ds1, df3_ds1, df4_ds1, df5_ds1), by = "gene_id")
-
-df_ora_filtered <- list(df_ora_filtered)
-names(df_ora_filtered) <- 'healthy-covid19'
-
-heatmap_function(dds_object, df_ora_filtered)
+covid19_ds2_analysis$volcano_plots
+covid19_ds2_analysis$heatmap
+covid19_ds2_analysis$ora_down_raw$enrichgo_visuals
+covid19_ds2_analysis$ora_up_raw$enrichgo_visuals
 ```
+
+# Covid19- DS3 GSE161731 Downstream Analysis
+
+```{r}
+covid19_ds3_analysis <- run_de_pipeline(covid19_ds3, 
+                                        results_dds3,
+                                        deg_log2fc_thresh = 1, 
+                                        deg_pval_adj_thresh = 0.05, 
+                                        vol_plot_lower_xlim = -10, 
+                                        vol_plot_upper_xlim = 10, 
+                                        cartesian_step = 5, 
+                                        ora_pval_adj_threshold = 0.5)
+```
+
+# **Covid-19 DS4 GSE**227116 **Downstream Analaysis**
 
 ```{r, include=FALSE}
-df1_ds2 <- unpacked_results_down$`Healthy-COVID19`$`defense response to virus`
-df1_ds2_ora_filtered <- unique(bind_rows(df1_ds2), by = "gene_id")
-
-df1_ds2_ora_filtered <- list(df1_ds2_ora_filtered)
-names(df1_ds2_ora_filtered) <- 'healthy-covid19'
-
-heatmap_function(dds_object, df1_ds2_ora_filtered)
-```
-
-# Healthy vs Convalescent Comparisons
-
-(per Dataset)
-
-Covid-19 DS1 has 131 unique DEGs total for this comparison
-
-# Covid-19 vs Convalescent Comparison
-
-(per Dataset)
-
-Covid-19 DS1 had 2303 unique signifcant (abs(log2FC) \>= 1, pval \< 0.05)DEGs total for this comparison
-
-# Intergrated Dataset Differential Expression
-
-```{r}
-unique(covid19_ds124@colData$condition)
+covid19_ds4_analysis <- run_de_pipeline(covid19_ds4, 
+                                        results_dds4,
+                                        deg_log2fc_thresh = 1, 
+                                        deg_pval_adj_thresh = 0.05, 
+                                        vol_plot_lower_xlim = -10, 
+                                        vol_plot_upper_xlim = 10, 
+                                        cartesian_step = 5, 
+                                        ora_pval_adj_threshold = 0.5)
 ```
 
 ```{r}
-dds_object <- covid19_ds124 
-condition_col = "condition"
-ref_group_name = "healthy"
-results_dds124 <- edgeR_diffexp(covid19_ds124,
-                                condition_col,
-                                ref_group_name)
+#saveRDS(covid19_ds2_analysis, "./downstream_results/covid_ds4_gse227116")
 ```
 
-```{r, include=FALSE}
+```{r}
 
-# 1. Initialize dataset-specific starting table
-initial_table_124 <- covid19_ds124
+```
 
-# 2. Set up the list container for raw results
-diffexp_results_124 <- vector("list", length(results_dds124))
-names(diffexp_results_124) <- names(results_dds124)
+### Displaying All the Results
 
-# 3. Process each comparison through the volcano function
-for (i in seq_along(results_dds124)) {
+```{r}
+covid19_ds4_analysis$volcano_plots
+covid19_ds4_analysis$heatmap
+covid19_ds4_analysis$ora_down_raw$enrichgo_visuals
+covid19_ds4_analysis$ora_up_raw$enrichgo_visuals
 
-  volcano_res <- volcano_plot(
-    results_dds124[[i]],
-    log2fc_thresh = 1,
-    p.val_thresh = 0.01,
-    lower_xlim = -10,
-    upper_xlim = 10,
-    step = 5
-  )
-  
-  # Store both the data frame and the customized plot
-  diffexp_results_124[[i]] <- list(
-    data = volcano_res[[1]],
-    vol_plot = volcano_res[[2]] +
-      labs(title = glue::glue("Volcano Plot: {names(results_dds124)[i]}"))
-  )
+```
+
+### Significant DEGs
+
+**Covid-19 DS4 GSE227226 significant DEGs abs(log2fc) \> 1 and pval_adj \< 0.05**
+
+**healthy vs convascent: total DEGs: 111**
+
+**24 sig up, 87 sig down**
+
+Over_Representated Pathways
+
+Observation: There are Barely any over-represented pathways after inputting the 111 DEGs into enrichGO. This is consistent for both the pval threshold at 0.05 for both up and down regulated DEGs as input.
+
+# Covid-19 DS5 GSE152418 Downstream Analysis
+
+```{r}
+covid19_ds5_analysis <- run_de_pipeline(covid19_ds5, 
+                                        results_dds5,
+                                        deg_log2fc_thresh = 1, 
+                                        deg_pval_adj_thresh = 0.05, 
+                                        vol_plot_lower_xlim = -10, 
+                                        vol_plot_upper_xlim = 10, 
+                                        cartesian_step = 5, 
+                                        ora_pval_adj_threshold = 0.5)
+```
+
+### Dispalying Results
+
+# Integrated Covid Dataset (**GSE202805 + GSE**227116 + **GSE**152641) Downstreamt Analysis
+
+```{r}
+covid19_dsint <- readRDS("./post_processed_data/covid_dds_12345.rds")
+```
+
+```{r}
+disease_states <- c(levels(covid19_dsint$condition))
+
+comb = function(n, x) {
+  factorial(n) / factorial(n-x) / factorial(x)
 }
 
-# 4. Add the Datatables within a seperate variable for future parsing
-filtered_results_124 <- lapply(diffexp_results_124, function(x) x$data)
+comb(length(disease_states), 2)
+```
 
-# 5. Generating Heatmap for each comparison
-heatmap_visuals_124 <- heatmap_function(initial_table_124, filtered_results_124)
+```{r, include =FASLE}
+unique(covid19_dsint@colData$condition)
+dds_object <- covid19_dsint 
+condition_col = "condition"
+ref_group_name = "healthy"
+results_ddsint <- edgeR_diffexp(covid19_dsint,
+                                condition_col,
+                                ref_group_name)
+
+covid19_ds124_analysis <- run_de_pipeline(covid19_dsint, 
+                                        results_ddsint,
+                                        deg_log2fc_thresh = 1, 
+                                        deg_pval_adj_thresh = 0.05, 
+                                        vol_plot_lower_xlim = -20, 
+                                        vol_plot_upper_xlim = 20, 
+                                        cartesian_step = 5, 
+                                        ora_pval_adj_threshold = 0.05)
 ```
 
 ```{r}
-#saving visuals for Volcano plot
-results_vol_plots <- lapply(diffexp_results_124, function(x) x$vol_plot)
-
-
-#perform an EnrichGO ORA
-#ORA only takes in significant DEGs Answers the question:
-#Which pathways are overrepresented in my list of significant genes? 
-
-ora_output_up_124 <- ora_enrichgo(
-  # Output of the differential expression results.
-  filtered_results_124,
-  # Which Direction of the DEGs (Upregulated("up")/Down("down"))
-  direction = "up",
-  #How strict do you want your DEGs entered into the ORA?
-  log2fc_thresh = 1,
-   # what is the pval_thresh of the ORA
-  pval_thresh = 0.05,
-  #How many terms do you wantv visualized in your dotplots?
-  top_terms = 15
-)
-
-ora_output_down_124 <- ora_enrichgo(
-  # Output of the differential expression results.
-  filtered_results_124,
-  # Which Direction of the DEGs (Upregulated("up")/Down("down"))
-  direction = "down",
-  #How strict do you want your DEGs entered into the ORA?
-  log2fc_thresh = 1,
-  # what is the pval_thresh of the ORA
-  pval_thresh = 0.05,
-  #How many terms do you wantv visualized in your dotplots?
-  top_terms = 15
-)
+#saveRDS(covid19_ds124_analysis, "./downstream_results/covid_ds124_integrated")
 ```
 
 ```{r}
-# making a data table for each Description Term that is consider statistically significant within the context of the ORA
+if(!dir.exists("downstream_results")) dir.create("downstream_results", recursive = TRUE)
 
-initial_tables <- filtered_results_124
+save(
+  covid19_ds1_analysis,
+  file = "./downstream_results/covid19_ds1_analysis.RData",
+  compress = "gzip"
+)
 
-key_down <- ora_output_down_124$enrichgo_results
+save(
+  covid19_ds2_analysis,
+  file = "./downstream_results/covid19_ds2_analysis.RData",
+  compress = "gzip"
+)
 
-key_up <-ora_output_up_124$enrichgo_results
-  
-pval_adj_threshold <- 0.001
+save(
+  covid19_ds3_analysis,
+  file = "./downstream_results/covid19_ds3_analysis.RData",
+  compress = "gzip"
+)
 
-unpacked_results_down <-  enrichgo_unpack_ver3(initial_table_list = initial_tables,
-                                                 key = key_down,
-                                                 pval_adj_threshold = 0.005,
-                                                 convert = FALSE,
-                                                 from_type = "ensembl",
-                                                 to_type = "symbol",
-                                                 ensembl_dataset = "hsapiens_gene_ensembl")
+save(
+  covid19_ds4_analysis,
+  file = "./downstream_results/covid19_ds4_analysis.RData",
+  compress = "gzip"
+)
 
-unpacked_results_up <-  enrichgo_unpack_ver3(initial_table_list = initial_tables,
-                                                 key = key_up,
-                                                 pval_adj_threshold = 0.005,
-                                                 convert = FALSE,
-                                                 from_type = "ensembl",
-                                                 to_type = "symbol",
-                                                 ensembl_dataset = "hsapiens_gene_ensembl")
+save(
+  covid19_ds5_analysis,
+  file = "./downstream_results/covid19_ds5_analysis.RData",
+  compress = "gzip"
+)
 
+save(
+  covid19_ds124_analysis,
+  file = "./downstream_results/covid_ds12345_integrated.RData",
+  compress = "gzip"
+)
+```
+
+### Displaying Results
+
+```{r}
+end.time <- Sys.time()
+time.taken <- end.time - start.time
+time.taken
+```
+
+```{r}
+covid19_ds124_analysis$volcano_plots
+covid19_ds124_analysis$heatmap
+covid19_ds124_analysis$ora_down_raw$enrichgo_visuals
+#covid19_ds124_analysis$ora_up_raw$enrichgo_visuals
 ```
 
 ```{r}
@@ -427,32 +344,166 @@ gg_patchwork(heatmap_visuals_124[[h]],
 }
 ```
 
+# Meta-Analysis
+
+### DEG Meta-Analysis
+
 ```{r}
-results_vol_plots
+library(ggvenn)
 ```
 
 ```{r}
-ora_output_up_124$enrichgo_visuals
-ora_output_down_124$enirchgo_visuals
-
-```
-
-```{r}
-
-ora_output_down_124 <- ora_enrichgo(
-  # Output of the differential expression results.
-  filtered_results_124,
-  # Which Direction of the DEGs (Upregulated("up")/Down("down"))
-  direction = "down",
-  #How strict do you want your DEGs entered into the ORA?
-  log2fc_thresh = 1,
-  # what is the pval_thresh of the ORA
-  pval_thresh = 0.05,
-  #How many terms do you wantv visualized in your dotplots?
-  top_terms = 15
+deg_results_list <- list(
+  ds1 = covid19_ds1_analysis$filtered_results,
+  ds2 = covid19_ds2_analysis$filtered_results,
+  ds4 = covid19_ds4_analysis$filtered_results,
+  int_ds = covid19_ds124_analysis$filtered_results
 )
+
+# initialize output list
+all_degs <- vector("list", length(deg_results_list))
+names(all_degs) <- c("GSE202805", "GSE152641", "GSE227116", "Integrated")
+
+# loop through each dataset
+for (j in seq_along(deg_results_list)) {
+  
+  current_dataset <- deg_results_list[[j]]
+  current_genes <- c()
+  
+  # loop through each DEG table in the dataset
+  for (i in seq_along(current_dataset)) {
+    
+    current_genes <- c(
+      current_genes,
+      current_dataset[[i]]$geneid
+    )
+  }
+  
+  # optionally remove duplicates
+  all_degs[[j]] <- unique(current_genes)
+}
+ggvenn(all_degs)
+```
+
+There is an overall large heterogeneous mixture of DEGs between the three individual data-sets and the batch corrected, integrated data-set. A majority of the DEGs reside within their parent data-set and remain exclusive to their internal comparisons. The Integrated Dataset does share at least 150 DEGs with GSE152641 (GSE152641 U Integrated nDEGs = 196), and GSE202805 (GSE202805 U Integrated = 153), where the three held 172 DEGs (GSE202805 U GSE152641 U Integrated nDEGs = 172). However the integrated dataset does not share many DEGs (nDEGs\<20) with GSE227116.
+
+### OverRepresented Pathways Meta-Analysis
+
+```{r}
+ora_desc_collapse_fxn <- function(unpacked_results){
+  ora_desc_list <- vector("list", length(unpacked_ora_results_ds1))
+  names(ora_desc_list) <- names(unpacked_ora_results_ds1)
+  
+  for(i in seq_along(unpacked_ora_results_ds1)) {
+    
+    # for each comparison within the unpacked results
+    current_comparison <- unpacked_ora_results_ds1[[i]]
+    
+    ora_descriptions <- c()
+    
+    # for each table within that specific comparison
+    for(j in seq_along(current_comparison)) {
+      
+      ora_descriptions <- c(
+        ora_descriptions,
+        current_comparison[[j]]$gene_desc.x
+      )
+    }
+    
+    ora_desc_list[[i]] <- unique(ora_descriptions)
+  }
+  return(ora_desc_list)
+}
 ```
 
 ```{r}
-ora_output_down_124
+upreg_unpacked_ora_ds1 <- covid19_ds1_analysis$unpacked_results_up
+downreg_unpacked_ora_ds1 <- covid19_ds1_analysis$unpacked_results_down
+
+covid19_ds1_summarized_ora_terms <- list("up" = ora_desc_collapse_fxn(upreg_unpacked_ora_ds1),
+                                   "down" = ora_desc_collapse_fxn(downreg_unpacked_ora_ds1)) %>% unlist()
+                                   
+                                  
+upreg_unpacked_ora_ds2 <- covid19_ds2_analysis$unpacked_results_up
+downreg_unpacked_ora_ds2 <- covid19_ds2_analysis$unpacked_results_down                      
+
+
+covid19_ds2_summarized_ora_terms <- list("up" = ora_desc_collapse_fxn(upreg_unpacked_ora_ds2),
+                                   "down" = ora_desc_collapse_fxn(downreg_unpacked_ora_ds2)) %>% unlist()
+
+
+upreg_unpacked_ora_ds4 <- covid19_ds4_analysis$unpacked_results_up
+downreg_unpacked_ora_ds4 <- covid19_ds4_analysis$unpacked_results_down                      
+
+
+covid19_ds4_summarized_ora_terms <- list("up" = ora_desc_collapse_fxn(upreg_unpacked_ora_ds4),
+                                   "down" = ora_desc_collapse_fxn(downreg_unpacked_ora_ds4)) %>% unlist()
+
+upreg_unpacked_ora_ds124 <- covid19_ds124_analysis$unpacked_results_up
+downreg_unpacked_ora_ds124 <- covid19_ds124_analysis$unpacked_results_down                      
+
+
+covid19_ds124_summarized_ora_terms <- list("up" = ora_desc_collapse_fxn(upreg_unpacked_ora_ds124),
+                                   "down" = ora_desc_collapse_fxn(downreg_unpacked_ora_ds124)) %>% unlist()
 ```
+
+```{r}
+all_ora_terms <- list("GSE202805" = covid19_ds1_summarized_ora_terms , 
+                      "GSE152641" = covid19_ds2_summarized_ora_terms, 
+                      "GSE227116" = covid19_ds4_summarized_ora_terms, 
+                      "Integrated" = covid19_ds124_summarized_ora_terms)
+ggvenn(all_ora_terms)
+```
+
+# DEGs from OverRepresented Pathways analysis Heatmap
+
+# Healthy vs COVID-19 Comparisons
+
+Covid-19 Dataset 1 (GSE202805) top over-represented pathways by p-values of hypergeometric test
+
+```{r}
+df1_ds1 <- covid19_ds1_analysis$unpacked_results_down$`healthy-covid19`$`immunoglobulin mediated immune response`
+df2_ds1 <- covid19_ds1_analysis$unpacked_results_down$`healthy-covid19`$`B cell mediated immunity`
+df3_ds1 <- covid19_ds1_analysis$unpacked_results_down$`healthy-covid19`$`antibacterial humoral response`
+df4_ds1 <- covid19_ds1_analysis$unpacked_results_down$`healthy-covid19`$`mucosal immune response`
+df5_ds1 <- covid19_ds1_analysis$unpacked_results_down$`healthy-covid19`$`antimicrobial humoral response`
+
+df_ora_filtered <- unique(bind_rows(df1_ds1, df2_ds1, df3_ds1, df4_ds1, df5_ds1), by = "gene_id")
+
+
+df_ora_filtered <- list(df_ora_filtered)
+names(df_ora_filtered) <- 'healthy-covid19'
+
+
+heatmap_function(dds_object, df_ora_filtered)
+```
+
+Covid-19 Dataset 2 (GSE152641) top over-represented pathways by p-values of hypergeometric test
+
+```{r, include=FALSE}
+df1_ds2 <- unpacked_results_down$`Healthy-COVID19`$`defense response to virus`
+df1_ds2_ora_filtered <- unique(bind_rows(df1_ds2), by = "gene_id")
+
+df1_ds2_ora_filtered <- list(df1_ds2_ora_filtered)
+names(df1_ds2_ora_filtered) <- 'Healthy-COVID19'
+
+image <- heatmap_function(dds_object, df1_ds2_ora_filtered)
+```
+
+```{r}
+image
+```
+
+```{r}
+table(colnames(expr)[matching_cols])
+length(unique(colnames(expr)[matching_cols]))
+ncol(expr)
+```
+
+# Healthy vs Convalescent Comparisons
+
+(per Dataset)
+
+# Covid-19 vs Convalescent Comparison
+
+(per Dataset)

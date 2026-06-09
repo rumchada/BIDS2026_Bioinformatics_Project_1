@@ -73,6 +73,8 @@ covid19_ds2 <- readRDS("./post_processed_data/gse152641_covid19_ds2.rds")
 covid19_ds3 <- readRDS("./post_processed_data/gse161731_covid19_ds3.rds")
 
 covid19_ds4 <- readRDS("./post_processed_data/gse227116_covid19_ds4.rds")
+
+covid19_ds5 <- readRDS("./post_processed_data/gse152418_covid19_ds5.rds")
 ```
 
 #### QC Plots on raw count matrix
@@ -93,10 +95,16 @@ plot_total_counts(covid19_ds1) +
   
   
 plot_total_counts(covid19_ds2) + 
-  labs(title = "gse227116 / COVID-19 DS2 library sizes")
+  labs(title = "gse152641 / COVID-19 DS2 library sizes")
+
+plot_total_counts(covid19_ds3) +
+  labs(title = "gse161713 / COVID-19 DS3 library sizes")
 
 plot_total_counts(covid19_ds4) + 
-  labs(title = "gse152641 / COVID-19 DS4 library sizes")
+  labs(title = "gse227116 / COVID-19 DS4 library sizes")
+
+plot_total_counts(covid19_ds5) + 
+  labs(title = "gse152418 / COVID-19 DS5 library sizes")
 ```
 
 ## Library Complexity
@@ -118,10 +126,17 @@ plot_library_complexity(covid19_ds1) +
   labs(title = "gse202805 / COVID-19 DS1 library complexity") 
   
 plot_library_complexity(covid19_ds2) + 
-  labs(title = "gse227116 / COVID-19 DS2 library complexity")
+  labs(title = "gse152641 / COVID-19 DS2 library complexity")
+
+
+plot_library_complexity(covid19_ds3) +
+  labs(title = "gse161713 / COVID-19 DS3 library complexity")
 
 plot_library_complexity(covid19_ds4) + 
-  labs(title = "gse152641/ COVID-19 DS3 library complexity")
+  labs(title = "gse227116 / COVID-19 DS4 library complexity")
+
+plot_library_complexity(covid19_ds5) +
+   labs(title = "gse152418 / COVID-19 DS5 library sizes")
 ```
 
 **Library complexity is only one component of sequencing saturation. It is also dependent on the sequencing depth: the total number of reads the machine produced per sample**
@@ -146,6 +161,9 @@ plot_gene_detection(covid19_ds2) +
 
 plot_gene_detection(covid19_ds4) + 
   labs(title = "gse152641 / COVID-19 DS3 gene detection")
+
+plot_gene_detection(covid19_ds5) +
+     labs(title = "gse152418 / COVID-19 DS5 library sizes")
 ```
 
 ## Boxplot of Normalized Counts (Pre-Filtering)
@@ -202,6 +220,7 @@ baseline_dimreduction(covid19_ds1)
 baseline_dimreduction(covid19_ds2)
 baseline_dimreduction(covid19_ds3)
 baseline_dimreduction(covid19_ds4)
+baseline_dimreduction(covid19_ds5)
 ```
 
 **Answering the Question:**
@@ -237,10 +256,24 @@ Ultimately the goal of batch correction is scientific replicalbility and synchro
 PC_variance Association not hard Variance Decomposition
 
 ```{r}
-pc_var_association(covid19_ds1)
-pc_var_association(covid19_ds2)
-pc_var_association(covid19_ds3)
-pc_var_association(covid19_ds4)
+covid19_ds1@colData[] <- lapply(covid19_ds1@colData, factor)
+covid19_ds2@colData[] <- lapply(covid19_ds2@colData, factor)
+covid19_ds3@colData[] <- lapply(covid19_ds3@colData, factor)
+covid19_ds4@colData[] <- lapply(covid19_ds4@colData, factor)
+covid19_ds5@colData[] <- lapply(covid19_ds5@colData, factor)
+
+```
+
+```{r}
+covid19_ds1@colData
+```
+
+```{r}
+pc_var_association(covid19_ds1) # 202805
+pc_var_association(covid19_ds2) # 152641
+pc_var_association(covid19_ds3) # 161731
+pc_var_association(covid19_ds4) # 227116
+pc_var_association(covid19_ds5) # 152418
 ```
 
 Results. Accounting for Batch Effects within a dataset result:
@@ -259,12 +292,15 @@ For the sake brevity lets reduce it doiwn to the healthy and COVID-19 samples
 
 # Harmonizing the DataSets
 
+#### Standardizing Datasets
+
 ```{r}
 # Adding DataSet Moniceurs
 colData(covid19_ds1)$ds_origin <- "GSE202805"
 colData(covid19_ds2)$ds_origin <- "GSE152641"
 colData(covid19_ds3)$ds_origin <- "GSE161731"
 colData(covid19_ds4)$ds_origin <- "GSE227116"
+colData(covid19_ds5)$ds_origin <- "GSE152418"
 ```
 
 ```{r}
@@ -272,6 +308,7 @@ unique(as.data.frame(covid19_ds1@colData)$condition)
 unique(as.data.frame(covid19_ds2@colData)$condition) 
 unique(as.data.frame(covid19_ds3@colData)$condition)
 unique(as.data.frame(covid19_ds4@colData)$condition)
+unique(as.data.frame(covid19_ds5@colData)$condition)
 ```
 
 At this point ended up replacing GSE22116 with GSE152641 because of disease state homogeneity and switching a cleaning the meta_data is a hassle
@@ -281,31 +318,61 @@ At this point ended up replacing GSE22116 with GSE152641 because of disease stat
 ```{r}
 covid19_ds1@colData$condition <- covid19_ds1@colData$condition %>% tolower()
 covid19_ds2@colData$condition <- covid19_ds2@colData$condition %>% tolower()
-covid19_ds3@colData$condition <- covid19_ds3@colData$condition %>% tolower() %>% gsub("-", "", .)
+covid19_ds3@colData$condition <- covid19_ds3@colData$condition %>% tolower() %>% gsub("covid-19", "covid19", .) %>% gsub(" ", "_", .) %>% as.factor()
 
 covid19_ds4@colData$condition <- covid19_ds4@colData$condition %>% tolower()
+
+covid19_ds5@colData$condition <- covid19_ds5@colData$condition %>% tolower() %>% gsub("-", "",.)
+
+covid19_ds1@colData[] <- lapply(covid19_ds1@colData, factor)
+covid19_ds2@colData[] <- lapply(covid19_ds2@colData, factor)
+covid19_ds3@colData[] <- lapply(covid19_ds3@colData, factor)
+covid19_ds4@colData[] <- lapply(covid19_ds4@colData, factor)
+covid19_ds5@colData[] <- lapply(covid19_ds5@colData, factor)
+
 
 
 unique(as.data.frame(covid19_ds1@colData)$condition)
 unique(as.data.frame(covid19_ds2@colData)$condition) 
 unique(as.data.frame(covid19_ds3@colData)$condition)
 unique(as.data.frame(covid19_ds4@colData)$condition)
+unique(as.data.frame(covid19_ds5@colData)$condition)
+```
+
+```{r}
+saveRDS(covid19_ds1, "./post_processed_data/gse202805_covid19_ds1.rds")
+saveRDS(covid19_ds2, "./post_processed_data/gse152641_covid19_ds2.rds")
+saveRDS(covid19_ds3, "./post_processed_data/gse161731_covid19_ds3.rds")
+saveRDS(covid19_ds4, "./post_processed_data/gse227116_covid19_ds4.rds")
+saveRDS(covid19_ds5, "./post_processed_data/gse152418_covid19_ds5.rds")
 ```
 
 ### Subsetting for shared genes IDs within each object
 
 ```{r}
-common_genes <- Reduce(intersect, list(rownames(covid19_ds1), rownames(covid19_ds2), rownames(covid19_ds4)))
+common_genes <- Reduce(intersect, list(
+  rownames(covid19_ds1), 
+  rownames(covid19_ds2),
+  rownames(covid19_ds3),
+  rownames(covid19_ds4), 
+  rownames(covid19_ds5)))
+
+
 covid_ds1_shared <- covid19_ds1[common_genes, ]
 covid_ds2_shared <- covid19_ds2[common_genes, ]
+covid_ds3_shared <- covid19_ds3[common_genes, ]
 covid_ds4_shared <- covid19_ds4[common_genes, ]
-
-counts_table_one <- counts(covid_ds1_shared , normalized = FALSE)
-counts_table_two <- counts(covid_ds2_shared , normalized = FALSE)
-counts_table_three <- counts(covid_ds4_shared , normalized = FALSE)
+covid_ds5_shared <- covid19_ds5[common_genes, ]
 
 
-shared_counts <- cbind(counts_table_one, counts_table_two, counts_table_three)
+counts_table_one <- counts(covid_ds1_shared , normalized = FALSE) # GSE202805
+counts_table_two <- counts(covid_ds2_shared , normalized = FALSE) # "GSE152641"
+counts_table_three <- counts(covid_ds3_shared, normalized = FALSE) # "GSE161731"
+counts_table_four <- counts(covid_ds4_shared , normalized = FALSE) # "GSE227116"
+counts_table_five <- counts(covid_ds5_shared, normalized = FALSE) # "GSE152418"
+
+
+shared_counts <- cbind(counts_table_one, counts_table_two, counts_table_three, counts_table_four, counts_table_five)
 
 
 ```
@@ -315,39 +382,64 @@ shared_counts <- cbind(counts_table_one, counts_table_two, counts_table_three)
 ```{r}
 meta1 <- as.data.frame(colData(covid19_ds1))
 meta2 <- as.data.frame(colData(covid19_ds2))
+meta3 <- as.data.frame(colData(covid19_ds3))
 meta4 <- as.data.frame(colData(covid19_ds4))
+meta5 <- as.data.frame(colData(covid19_ds5))
+```
 
+```{r}
 meta_data_stnrd <- function(df) {
   
-  # If 'batch_num' exists and isn't entirely NA
-  if("batch_num" %in% colnames(df)) {
-    # Combine dataset origin and internal batch (e.g., "GSE161731_B1")
+  # 1. Handle unified_batch safely
+  # Checks if column exists AND has at least one non-NA value
+  
+  if ("batch_num" %in% colnames(df) && !all(is.na(df$batch_num))) {
+    # If batch_num exists, combine them
     df$unified_batch <- as.factor(paste0(df$ds_origin, "_B", df$batch_num))
   } else {
-    # If no internal batch metadata exists, the dataset itself is the batch
+    
     df$unified_batch <- as.factor(df$ds_origin)
   }
   
-  if(!"time_point" %in% colnames(df)){
+  # 2. Handle time_point (Default to "none" if missing or NA)
+  if (!"time_point" %in% colnames(df)) {
     df$time_point <- "none"
-  }else{
+  } else {
     df$time_point[is.na(df$time_point)] <- "none"
   }
   
+  # 3. Handle age (Keep true NA, convert to factor only if character)
+  if (!"age" %in% colnames(df)) {
+    df$age <- "na"
+  } else if (is.character(df$age)) {
+    df$age <- as.factor(df$age)
+  }
+  
+  # 4. Handle severity (Ensure character type, keep true NA)
+  if (!"severity" %in% colnames(df)) {
+    df$severity <- "na"
+  } else {
+    df$severity <- as.character(df$severity)
+  }
+  
   return(df)
-} 
+}
 
 meta1 <- meta_data_stnrd(meta1)
 meta2 <- meta_data_stnrd(meta2)
+meta3 <- meta_data_stnrd(meta3)
 meta4 <- meta_data_stnrd(meta4)
+meta5 <- meta_data_stnrd(meta5)
 
 
-keep_cols <- c("condition", "ds_origin", "unified_batch", "time_point")
+keep_cols <- c("condition", "ds_origin", "time_point", "age", "severity")
 
 
 shared_metadata <- rbind(meta1[, keep_cols, drop=FALSE],
                         meta2[, keep_cols, drop=FALSE],
-                      meta4[, keep_cols, drop=FALSE])
+                        meta3[, keep_cols, drop=FALSE],
+                      meta4[, keep_cols, drop=FALSE],
+                      meta5[, keep_cols, drop=FALSE])
 # reording shared meta_data for rownames
 shared_metadata <- shared_metadata[colnames(shared_counts), ]
 shared_metadata <- shared_metadata %>% mutate(time_point = as.factor(time_point),
@@ -445,7 +537,6 @@ baseline_dimreduction(bulk_dataset, NA)
 ```
 
 ```{r}
-scree_plot
 pc_var_association(int_ds)
 ```
 
@@ -538,7 +629,7 @@ boxplot_zero_cnt
 Tried Limma and Manual Batch correction all of them did worse than combat-seq
 
 ```{r}
-saveRDS(corrected_int_data,"./post_processed_data/covid_dds_124.rds")
+saveRDS(corrected_int_data,"./post_processed_data/covid_dds_12345.rds")
 ```
 
 ```{r}

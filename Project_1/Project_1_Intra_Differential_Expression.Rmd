@@ -7,6 +7,10 @@ output:
 
 # Read-In Libraries
 
+```{r}
+start.time <- Sys.time()
+```
+
 ```{r, include =FALSE}
 library(tidyverse)
 library(glue)
@@ -26,14 +30,33 @@ source("Project_1_function_lab.R")
 ```{r}
 covid19_ds1 <- readRDS("./post_processed_data/gse202805_covid19_ds1.rds")
 covid19_ds2 <- readRDS("./post_processed_data/gse152641_covid19_ds2.rds")
+covid19_ds3 <- readRDS("./post_processed_data/gse161731_covid19_ds3.rds")
 covid19_ds4 <- readRDS("./post_processed_data/gse227116_covid19_ds4.rds")
-covid19_ds124 <- readRDS("./post_processed_data/covid_dds_124.rds")
+covid19_ds5 <- readRDS("./post_processed_data/gse152418_covid19_ds5.rds")
+
+covid19_dsint <- readRDS("./post_processed_data/covid_dds_12345.rds")
 
 
 # Adding DataSet Moniceurs
 colData(covid19_ds1)$ds_origin <- "GSE202805"
 colData(covid19_ds2)$ds_origin <- "GSE152641"
+colData(covid19_ds3)$ds_origin <- "GSE161731"
 colData(covid19_ds4)$ds_origin <- "GSE227116"
+colData(covid19_ds5)$ds_origin <- "GSE152418"
+```
+
+```{r}
+covid19_ds1@colData$condition <- covid19_ds1@colData$condition %>% tolower()
+covid19_ds2@colData$condition <- covid19_ds2@colData$condition %>% tolower()
+covid19_ds3@colData$condition <- covid19_ds3@colData$condition %>% tolower() %>% gsub("-", "",.) %>% as.factor()
+
+covid19_ds4@colData$condition <- covid19_ds4@colData$condition %>% tolower()
+
+covid19_ds5@colData$condition <- covid19_ds5@colData$condition %>% tolower() %>% gsub("-", "",.)
+```
+
+```{r}
+levels(covid19_ds3@colData$condition)
 ```
 
 <https://olvtools.com/en/documents/edger>
@@ -54,8 +77,10 @@ ref_group_name = "healthy"
 # The use give the condition column from the metadata to make the test parameters
 # and the control group
 results_dds1 <- edgeR_diffexp(covid19_ds1, condition_col,  ref_group_name)
-results_dds2 <- edgeR_diffexp(covid19_ds2, condition_col, "Healthy")
+results_dds2 <- edgeR_diffexp(covid19_ds2, condition_col, ref_group_name)
+results_dds3 <- edgeR_diffexp(covid19_ds3, condition_col, ref_group_name)
 results_dds4 <- edgeR_diffexp(covid19_ds4, condition_col, ref_group_name)
+results_dds5 <- edgeR_diffexp(covid19_ds5, condition_col, ref_group_name)
 ```
 
 # **Covid-19 DS1 GSE202805 Downstream Analaysis**
@@ -103,7 +128,7 @@ covid19_ds1_analysis$ora_down_raw$enrichgo_visuals
 covid19_ds1_analysis$ora_up_raw$enrichgo_visuals
 ```
 
-# **Covid-19 DS2 GSE**152641 **Downstream Analaysis**
+# **Covid-19 DS2 GSE**152641 **Downstream Analysis**
 
 ```{r}
 covid19_ds2_analysis <- run_de_pipeline(covid19_ds2, 
@@ -137,6 +162,19 @@ covid19_ds2_analysis$ora_down_raw$enrichgo_visuals
 covid19_ds2_analysis$ora_up_raw$enrichgo_visuals
 ```
 
+# Covid19- DS3 GSE161731 Downstream Analysis
+
+```{r}
+covid19_ds3_analysis <- run_de_pipeline(covid19_ds3, 
+                                        results_dds3,
+                                        deg_log2fc_thresh = 1, 
+                                        deg_pval_adj_thresh = 0.05, 
+                                        vol_plot_lower_xlim = -10, 
+                                        vol_plot_upper_xlim = 10, 
+                                        cartesian_step = 5, 
+                                        ora_pval_adj_threshold = 0.5)
+```
+
 # **Covid-19 DS4 GSE**227116 **Downstream Analaysis**
 
 ```{r, include=FALSE}
@@ -154,6 +192,10 @@ covid19_ds4_analysis <- run_de_pipeline(covid19_ds4,
 #saveRDS(covid19_ds2_analysis, "./downstream_results/covid_ds4_gse227116")
 ```
 
+```{r}
+
+```
+
 ### Displaying All the Results
 
 ```{r}
@@ -164,7 +206,9 @@ covid19_ds4_analysis$ora_up_raw$enrichgo_visuals
 
 ```
 
-### Covid-19 DS3 GSE227226 significant DEGs abs(log2fc) \> 1 and pval_adj \< 0.05
+### Significant DEGs
+
+**Covid-19 DS4 GSE227226 significant DEGs abs(log2fc) \> 1 and pval_adj \< 0.05**
 
 **healthy vs convascent: total DEGs: 111**
 
@@ -174,19 +218,54 @@ Over_Representated Pathways
 
 Observation: There are Barely any over-represented pathways after inputting the 111 DEGs into enrichGO. This is consistent for both the pval threshold at 0.05 for both up and down regulated DEGs as input.
 
+# Covid-19 DS5 GSE152418 Downstream Analysis
+
+```{r}
+covid19_ds5_analysis <- run_de_pipeline(covid19_ds5, 
+                                        results_dds5,
+                                        deg_log2fc_thresh = 1, 
+                                        deg_pval_adj_thresh = 0.05, 
+                                        vol_plot_lower_xlim = -10, 
+                                        vol_plot_upper_xlim = 10, 
+                                        cartesian_step = 5, 
+                                        ora_pval_adj_threshold = 0.5)
+```
+
+### Dispalying Results
+
+```{r}
+covid19_ds5_analysis$volcano_plots
+covid19_ds5_analysis$heatmap
+
+```
+
 # Integrated Covid Dataset (**GSE202805 + GSE**227116 + **GSE**152641) Downstreamt Analysis
 
+```{r}
+covid19_dsint <- readRDS("./post_processed_data/covid_dds_12345.rds")
+```
+
+```{r}
+disease_states <- c(levels(covid19_dsint$condition))
+
+comb = function(n, x) {
+  factorial(n) / factorial(n-x) / factorial(x)
+}
+
+comb(length(disease_states), 2)
+```
+
 ```{r, include =FASLE}
-unique(covid19_ds124@colData$condition)
-dds_object <- covid19_ds124 
+unique(covid19_dsint@colData$condition)
+dds_object <- covid19_dsint 
 condition_col = "condition"
 ref_group_name = "healthy"
-results_dds124 <- edgeR_diffexp(covid19_ds124,
+results_ddsint <- edgeR_diffexp(covid19_dsint,
                                 condition_col,
                                 ref_group_name)
 
-covid19_ds124_analysis <- run_de_pipeline(covid19_ds124, 
-                                        results_dds124,
+covid19_ds124_analysis <- run_de_pipeline(covid19_dsint, 
+                                        results_ddsint,
                                         deg_log2fc_thresh = 1, 
                                         deg_pval_adj_thresh = 0.05, 
                                         vol_plot_lower_xlim = -20, 
@@ -199,7 +278,53 @@ covid19_ds124_analysis <- run_de_pipeline(covid19_ds124,
 #saveRDS(covid19_ds124_analysis, "./downstream_results/covid_ds124_integrated")
 ```
 
+```{r}
+if(!dir.exists("downstream_results")) dir.create("downstream_results", recursive = TRUE)
+
+save(
+  covid19_ds1_analysis,
+  file = "./downstream_results/covid19_ds1_analysis.RData",
+  compress = "gzip"
+)
+
+save(
+  covid19_ds2_analysis,
+  file = "./downstream_results/covid19_ds2_analysis.RData",
+  compress = "gzip"
+)
+
+save(
+  covid19_ds3_analysis,
+  file = "./downstream_results/covid19_ds3_analysis.RData",
+  compress = "gzip"
+)
+
+save(
+  covid19_ds4_analysis,
+  file = "./downstream_results/covid19_ds4_analysis.RData",
+  compress = "gzip"
+)
+
+save(
+  covid19_ds5_analysis,
+  file = "./downstream_results/covid19_ds5_analysis.RData",
+  compress = "gzip"
+)
+
+save(
+  covid19_ds124_analysis,
+  file = "./downstream_results/covid_ds12345_integrated.RData",
+  compress = "gzip"
+)
+```
+
 ### Displaying Results
+
+```{r}
+end.time <- Sys.time()
+time.taken <- end.time - start.time
+time.taken
+```
 
 ```{r}
 covid19_ds124_analysis$volcano_plots

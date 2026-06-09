@@ -19,6 +19,7 @@ pc_var_association <- function(bulk_ds){
   #creating a list of possible covariate to compare with PCs
   meta_data <- as.data.frame(bulk_ds@colData)
   
+  meta_data[] <- lapply(meta_data, factor)
   
   covars <- split(meta_data, 
                   rep(1:ncol(meta_data),
@@ -30,11 +31,11 @@ pc_var_association <- function(bulk_ds){
   names(covars) <- colnames(meta_data)
   
   
-  
-  
   get_p_value <- function(pc_vector, var) {
     
+    
     valid <- !is.na(pc_vector) & !is.na(var)
+    
     pc_vector <- pc_vector[valid]
     var_vector <- var[valid]
     
@@ -49,13 +50,13 @@ pc_var_association <- function(bulk_ds){
       anova_sum <- summary(fit)[[1]]
       p_val <- anova_sum[1, "Pr(>F)"]
       
-      if (is.null(p_val) || length(p_val) != 1) {
+      if (length(p_val) != 1 || is.na(p_val) || is.nan(p_val) || is.infinite(p_val)) {
         return(NA)
       }
       return(p_val)
+      
     }
   }
-  
   
   p_matrix <- matrix(NA, 
                      nrow = length(covars), 
@@ -69,15 +70,24 @@ pc_var_association <- function(bulk_ds){
       current_var <- covars[[vars]]
       current_pc <- top_pcs[, pcs]
       
-      
       p_matrix[vars, pcs] <- get_p_value(current_pc, current_var)
     }
   }
   
-  log_p_matrix <- -log10(p_matrix) %>% as.data.frame() %>% na.omit()
+  log_p_matrix <- -log10(p_matrix)
+  
+  max_finite <- max(log_p_matrix[is.finite(log_p_matrix)])
+  
+  log_p_matrix[is.infinite(log_p_matrix)] <- max_finite + 1
+  
+  log_p_matrix <- log_p_matrix[!apply(is.na(p_matrix), 1 , all), ]
   
   # 5. Plot the heatmap
-  p_val_map <-pheatmap(log_p_matrix,  cluster_rows=F, cluster_cols=F, main = "Correlation between of MetaVar X within PCX") 
+  p_val_map <- pheatmap(log_p_matrix, 
+                        legend_labels = "log10(pvalue)",
+                        cluster_rows=F, 
+                        cluster_cols=F, 
+                        main = "PC-Metadata Associations (-log10(p-value))") 
   return(p_val_map)
 }
 
@@ -256,6 +266,7 @@ volcano_plot <- function(diffexp_df,
   
   library(ggrepel)
   library(ggplot2)
+  library(dplyr)
   
 volcano_df <- diffexp_df %>%
     mutate(
@@ -266,8 +277,8 @@ volcano_df <- diffexp_df %>%
       )
     )
 
-deg_df <- volcano_df %>%
-  filter(color != "Not Significant")
+    deg_df <- volcano_df %>%
+      dplyr::filter(color != "Not Significant")
   
   
   volplot <- ggplot(volcano_df) +
@@ -449,7 +460,7 @@ gene_id_converter_ver2 <- function(vector, from_type, to_type, ensembl_datset){
   #initialize the return and parameters
   #baseline NULL intialization
   return_df <- NULL
-  max_attempts <- 10
+  max_attempts <- 2
   attempt <- 1
   org_db <- org.Hs.eg.db
   
@@ -518,13 +529,14 @@ heatmap_function <- function(initial_table, table_list) {
   
   require(colorRamp2)
   require(ComplexHeatmap)
+  require(circlize)
   
   # Initialize the list to store heatmap objects
   heatmap_list <- list()
   
   # Extract the raw count matrix once outside the loop for efficiency
   # Assumes a SingleCellExperiment or SummarizedExperiment-like structure
-  expr_raw <- as.matrix(initial_table@assays@data$counts)
+  expr_raw <- as.matrix(initial_table@assays@data$log_counts)
   
   #Early stopping points just in case
   if (any(is.na(colnames(expr_raw)))) stop("NA column names in expr_raw")
@@ -547,6 +559,9 @@ heatmap_function <- function(initial_table, table_list) {
     #itemizing the names of the
     ctrl_name      <- ctrl_treatment[1]
     treatment_name <- ctrl_treatment[2]
+    
+    
+    
     # Message tracking
     message(glue::glue("Processing: {ctrl_name} vs {treatment_name}"))
     
@@ -586,6 +601,7 @@ heatmap_function <- function(initial_table, table_list) {
     # Scaling and z-score normalizing the counts matrix
     expr_z <- t(scale(t(expr)))
     expr_z[is.na(expr_z)] <- 0
+    expr_z[!is.finite(expr_z)] <- 0
     rownames(expr_z) <- rownames(expr)
     colnames(expr_z) <- colnames(expr)
     
@@ -610,22 +626,44 @@ heatmap_function <- function(initial_table, table_list) {
     
     # Fallback to Ensembl ID if no symbol is found
     rownames(expr_z) <- ifelse(is.na(new_names), rownames(expr_z), new_names)
-    
-    print(sum(is.na(expr_z)))
+  
     
     # Clustering data (Optional: ComplexHeatmap does this natively if cluster_rows = TRUE, 
     # but kept if you intend to pass hclust objects explicitly)
+    
+    
+    # THIS IS A RISKY MOVE BUT IT WILL MAKE THE HEATMAP A LOT CLEANER
+    # PROS: IT WILL MAKE THE HEATMAP CLEANER
+    # CONS: IT MAY REMOVE BIOLOGICAL SIGNAL FOR A GENE: COULD BE EXPLAINED BY VARIANTS OF THE SAME GENE
+    expr_z <- expr_z[!duplicated(rownames(expr_z)), ]
+    
+    
     gene_dist <- dist(expr_z)
-    print(sum(is.na(gene_dist)))
     gene_hclust <- hclust(gene_dist)
+    
+    #____________________________________________________#
+    #Sample Color Annotation Block
+    sample_condition <- c(sub(".*_", "", colnames(expr_z)))
+    
+    condition_levels <- unique(sample_condition)
+    
+    #Setting colors for the chosen disease states
+    condition_cols <- setNames(
+      scales::hue_pal()(length(condition_levels)),
+      condition_levels
+    )
+    #Using HeatmapAnnotation
+    HA <- HeatmapAnnotation(
+      Condition = sample_condition,
+      col = list(Condition = condition_cols)
+    )
+    
+    #____________________________________________________#
     
     # Define color palette
     col_fun <- colorRamp2(c(-2, 0, 2), c("blue", "white", "red"))
     
     # THIS IS A RISKY MOVE BUT IT WILL MAKE THE HEATMAP A LOT CLEANER
-    # PROS: IT WILL MAKE THE HEATMAP CLEANER
-    # CONS: IT MAY REMOVE BIOLOGICAL SIGNAL FOR A GENE: COULD BE EXPLAINED BY WARIANTS OF THE SAME GENE
-    expr_z <- expr_z[!duplicated(rownames(expr_z)), ]
     
     # Gene ID conversion
     #Quality check of the number of DEGs matched from raw_expr table that were z-scaled
@@ -639,6 +677,9 @@ heatmap_function <- function(initial_table, table_list) {
       cluster_columns = TRUE,     
       cluster_rows    = TRUE, # To use your manual cluster, change to: cluster_rows = gene_hclust     
       row_names_gp    = gpar(fontsize = 12),
+      top_annotation  = HA,
+      show_row_dend   =  FALSE,
+      show_column_names = FALSE,
       row_gap         = unit(5, "mm"),
       column_title    = glue::glue("{ctrl_name} - {treatment_name} Diff Exp Genes")
     )
@@ -654,9 +695,9 @@ ora_dotplot <- function(ora_results, gspval_cutoff, org_by, num_disp, graph_titl
   if(org_by %in% 'Count'){
     #inside if
     dotplot <- ora_results%>%
-      arrange(desc(Count))%>%
-      head(num_disp)%>%
-      mutate(as.factor(Description))%>%
+      dplyr::arrange(desc(Count))%>%
+      utils::head(num_disp)%>%
+      dplyr::mutate(as.factor(Description))%>%
       ggplot() +
       aes(y = Count, x = fct_reorder(Description, Count)) +
       scale_colour_gradient(low = "red", high = "blue") +
@@ -669,10 +710,10 @@ ora_dotplot <- function(ora_results, gspval_cutoff, org_by, num_disp, graph_titl
   if(org_by %in% 'pvalue'){
     #inside if
     dotplot <- ora_results %>%
-      filter(pvalue < gspval_cutoff) %>%
-      head(num_disp) %>%
-      mutate(as.factor(Description)) %>%
-      mutate(pvalue = -1 * log(pvalue)) %>%
+      dplyr::filter(pvalue < gspval_cutoff) %>%
+      utils::head(num_disp) %>%
+      dplyr::mutate(as.factor(Description)) %>%
+      dplyr::mutate(pvalue = -1 * log(pvalue)) %>%
       ggplot() +
       aes(x = pvalue, y = fct_reorder(Description, pvalue))+
       scale_colour_gradient(low = "red", high = "blue") +
@@ -925,5 +966,168 @@ gg_patchwork <- function(plot, filename, width = 8, height = 6, dpi = 300, ...) 
   message("Saved: ", normalizePath(filename))
 }
 
+
+
+
+run_de_pipeline <- function(dds_object, 
+                            edgeR_results,
+                            #controls the intial filtering of DEGs directly after the edgeR differential expression
+                            
+                            deg_log2fc_thresh = 1, 
+                            #controls the intial p.val thresh of DEGs directly after the edgeR differential expression
+                            
+                            deg_pval_adj_thresh = 0.05, 
+                            # controls the volcano plot's lower x-axis limit on the image
+                            vol_plot_lower_xlim = -10, 
+                            #controls the volcano plot's upper x-axis limit on the image
+                            vol_plot_upper_xlim = 10, 
+                            # ticker step of the plot on both x and y axis
+                            cartesian_step = 5, 
+                            #over-representation test pvalue threshold
+                            ora_pval_adj_threshold = 0.05) {
+  
+  require(glue)
+  require(clusterProfiler)
+  require(ggplot2)
+  require(AnnotationDbi)
+  require(DESeq2)
+  #save vector the length of the edgeR results with comparisons
+  diffexp_results <- vector("list", length(edgeR_results))
+  names(diffexp_results) <- names(edgeR_results)
+  
+  # for each comparison
+  for (i in seq_along(edgeR_results)) {
+    
+    volcano_res <- volcano_plot(
+      edgeR_results[[i]],
+      log2fc_thresh = deg_log2fc_thresh,
+      p.val_adj_thresh = deg_pval_adj_thresh,
+      lower_xlim = vol_plot_lower_xlim,
+      upper_xlim = vol_plot_upper_xlim,
+      step = cartesian_step
+    )
+    #for each comparison within the edgeR diff exp analysis
+    # this function will save the filtered DEG table
+    
+    #save directly to the initialized vector
+    diffexp_results[[i]] <- list(
+      #saving the first subcript content of the volcano_res function
+      data = volcano_res[[1]],
+      
+      vol_plot = volcano_res[[2]] +
+        labs(title = glue::glue(
+          "Volcano Plot: {names(edgeR_results)[i]}"
+        ))
+      
+    )
+  }
+  
+    # save the filtered Differential Expression Results
+    filtered_results <- lapply(diffexp_results , function(x) x$data)
+    
+    #report for each comparison the number of up and down regulated DEGS
+    for(i in seq_along(filtered_results)){
+      
+      num_sig_up_degs <- unique(filtered_results[[i]]$geneid[filtered_results[[i]]$log2foldchange > deg_log2fc_thresh & filtered_results[[i]]$p.val_adj < deg_pval_adj_thresh])
+      
+      num_sig_down_degs <-unique(filtered_results[[i]]$geneid[filtered_results[[i]]$log2foldchange < -deg_log2fc_thresh & filtered_results[[i]]$p.val_adj < deg_pval_adj_thresh])
+      
+      total <- length(num_sig_down_degs) + length(num_sig_up_degs)
+      
+      message(
+        glue::glue(
+          "Within Dataset {unique(colData(dds_object)$ds_origin)}, ",
+          "Comparison: {names(filtered_results)[i]} has ",
+          "{length(num_sig_up_degs)} significantly up-regulated DEGs and ",
+          "{length(num_sig_down_degs)} down-regulated DEGs",
+          "Making a total of {total} DEGS"
+        )
+      )
+    }
+  
+  
+  #Plot the Heatmap of the Differential Expression Anaalysis
+  heatmap_visuals <- heatmap_function(dds_object, filtered_results)
+  
+  
+  #saving visuals for Volcano plot
+  results_vol_plots <- lapply(diffexp_results, function(x) x$vol_plot)
+  
+  
+  #perform an EnrichGO ORA
+  #ORA only takes in significant DEGs Answers the question:
+  #Which pathways are overrepresented in my list of significant genes? 
+  
+  ora_output_up <- ora_enrichgo(
+    # Output of the differential expression results.
+    filtered_results,
+    # Which Direction of the DEGs (Upregulated("up")/Down("down"))
+    direction = "up",
+    #How strict do you want your DEGs entered into the ORA?
+    log2fc_thresh = deg_log2fc_thresh,
+    # what is the pval_thresh of the ORA
+    pval_thresh = ora_pval_adj_threshold,
+    #How many terms do you wantv visualized in your dotplots?
+    top_terms = 15
+  )
+  
+  ora_output_down <- ora_enrichgo(
+    # Output of the differential expression results.
+    filtered_results,
+    # Which Direction of the DEGs (Upregulated("up")/Down("down"))
+    direction = "down",
+    #How strict do you want your DEGs entered into the ORA?
+    log2fc_thresh = deg_log2fc_thresh,
+    # what is the pval_thresh of the ORA
+    pval_thresh = ora_pval_adj_threshold,
+    #How many terms do you wantv visualized in your dotplots?
+    top_terms = 15
+  )
+  
+  #Unpacking ORA from enrichGO
+  
+  #Unpacking ORA from GO and align to your differential expression results for the input condition
+  
+  #ORA only takes in significant DEGs Answers the question:
+  
+  #Which pathways are overrepresented in my list of significant genes?
+  
+  
+  # making a data table for each Description Term that is consider statistically significant within the context of the ORA
+  
+  significant_degs <- filtered_results
+  
+  key_down <- ora_output_down$enrichgo_results
+  
+  key_up <-ora_output_up$enrichgo_results
+  
+  
+  unpacked_results_down <-  enrichgo_unpack_ver3(initial_table_list = significant_degs,
+                                                 key = key_down,
+                                                 pval_adj_threshold = ora_pval_adj_threshold,
+                                                 convert = FALSE,
+                                                 from_type = "ensembl",
+                                                 to_type = "symbol",
+                                                 ensembl_dataset = "hsapiens_gene_ensembl")
+  
+  unpacked_results_up <-  enrichgo_unpack_ver3(initial_table_list = significant_degs,
+                                               key = key_up,
+                                               pval_adj_threshold = ora_pval_adj_threshold,
+                                               convert = FALSE,
+                                               from_type = "ensembl",
+                                               to_type = "symbol",
+                                               ensembl_dataset = "hsapiens_gene_ensembl")
+  return(
+    list(
+      filtered_results      = filtered_results,
+      volcano_plots         = results_vol_plots,
+      heatmap               = heatmap_visuals,
+      ora_up_raw            = ora_output_up,
+      ora_down_raw          = ora_output_down,
+      unpacked_results_up   = unpacked_results_up,
+      unpacked_results_down = unpacked_results_down
+    )
+  )
+}
 
 

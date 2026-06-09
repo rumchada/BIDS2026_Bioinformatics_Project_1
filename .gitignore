@@ -15,6 +15,8 @@ GSE*/
 # Results folders
 results/
 output/
+downstream_results/
+post_processed_data/
 
 # R / Python junk
 .Rhistory
@@ -23,6 +25,15 @@ output/
 __pycache__/
 *.pyc
 
+#images
+.png
+.jpeg
+.pdf
+
+
 # macOS
 .DS_Store
 EOF
+
+Project_1/downstream_results/
+*.RData

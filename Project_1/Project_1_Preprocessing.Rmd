@@ -90,8 +90,10 @@ metadata <- data.frame(
     grepl("_convalescent$", colnames(counts)) ~ "convalescent",
     grepl("healthy$", colnames(counts)) ~ "healthy",
     TRUE ~ NA_character_
-  )
-) %>% slice(., 2:nrow(.))
+  ) 
+) %>% slice(., 2:nrow(.)) %>%
+  dplyr::mutate(condition = as.factor(condition)) %>%
+  dplyr::mutate(sample = as.factor(sample))
 ```
 
 ```{r}
@@ -102,10 +104,14 @@ counts <- counts %>%
 
 counts <- counts %>% column_to_rownames(var = "geneid")
 
+
+metadata[] <- lapply(metadata, factor)
+
 ```
 
 ```{r}
 counts
+metadata
 ```
 
 ```{r}
@@ -154,20 +160,20 @@ Platform:: NovaSeq 6000
 10 healthd donors, 65 blood samples.
 
 ```{r}
-gse_227116 <- getGEO("GSE152641", GSEMatrix = TRUE)
-gse_227116 <- gse_227116[[1]]
+gse_152641 <- getGEO("GSE152641", GSEMatrix = TRUE)
+gse_152641 <- gse_152641[[1]]
 
-expr_227116 <- exprs(gse_227116)
-meta_227116 <- pData(gse_227116)
+expr_152641 <- exprs(gse_152641)
+meta_152641 <- pData(gse_152641)
 
-head(expr_227116)
-head(meta_227116)
+head(expr_152641)
+head(meta_152641)
 
 getGEOSuppFiles("GSE152641")
 ```
 
 ```{r}
-meta_227116
+meta_152641
 ```
 
 ```{r}
@@ -200,26 +206,32 @@ tbl_ds2 <- tryCatch(
 
 ```{r}
 # cleaning the meta_data
-meta_227116 <- meta_227116 %>%
+meta_152641 <- meta_152641 %>%
             rename("condition" = "disease:ch1") %>%
             dplyr::mutate(condition = gsub("control", "", condition)) %>% 
             dplyr::mutate(condition = trimws(condition)) %>%
             dplyr::mutate(condition = gsub("s$","", condition)) %>%
+            dplyr::mutate(condition = tolower(condition)) %>%
             dplyr::select(geo_accession,
                           "age:ch1", 
                           condition, 
                           "Sex:ch1")
 
-colnames(meta_227116) <- sub(":.*", "", colnames(meta_227116))
+colnames(meta_152641) <- sub(":.*", "", colnames(meta_152641))
 
+meta_152641[] <- lapply(meta_152641, factor)
 
 #Mapping sample to the Condition
-mapping <- c(meta_227116$condition)
-names(mapping) <- meta_227116$geo_accession
+mapping <- c(meta_152641$condition)
+names(mapping) <- meta_152641$geo_accession
 colnames(tbl_ds2) <- names(mapping)
 
 new_names <- paste(colnames(tbl_ds2), mapping, sep = "_")
 colnames(tbl_ds2) <- new_names
+```
+
+```{r}
+meta_152641
 ```
 
 ```{r}
@@ -239,11 +251,12 @@ nrow(tbl_ds2)
 # arguments:input, from, to, iterations, species
 
 #managig RAM Space on a 16Gb vector limit 
-rm(expr_227116, gse_227116)
+rm(expr_152641, gse_152641)
 ```
 
 ```{r}
 tbl_ds2
+meta_152641
 ```
 
 # Total genes ids after summarization and concatentation of gene counts : 39,376
@@ -373,18 +386,23 @@ final_tbl_ds2 <- final_tbl_ds2 %>%
     column_to_rownames(var = "ensembl_id")
 
 #final edits of the metadata
-meta_227116$samples <- paste0(meta_227116$geo_accession, "_", meta_227116$condition)
+meta_152641$samples <- paste0(meta_152641$geo_accession, "_", meta_152641$condition)
 
 
-rownames(meta_227116) <- meta_227116$samples
+rownames(meta_152641) <- meta_152641$samples
 
-meta_227116 <- meta_227116 %>% dplyr::select(-c(samples))
-meta_227116
+
+meta_152641 <- meta_152641 %>% dplyr::select(-c("samples"))
+meta_152641
+```
+
+```{r}
+final_tbl_ds2
 ```
 
 ```{r}
 # Unflitered Counts Saved to a DeSeqDataSet (dds object)
-covid19_ds2 <- make_dds(counts = final_tbl_ds2 , metadata = meta_227116, ah_record = "AH89426")
+covid19_ds2 <- make_dds(counts = final_tbl_ds2 , metadata = meta_152641, ah_record = "AH89426")
 #renaming counts to raw counts
 assayNames(covid19_ds2)[1] <- "counts"
 
@@ -442,18 +460,25 @@ head(expr_161731)
 head(meta_161731)
 
 getGEOSuppFiles("GSE161731")
-```
 
-```{r}
+
 urld_ds3 <- "https://www.ncbi.nlm.nih.gov/geo/download/?format=file&type=rnaseq_counts"
 path_ds3 <- paste(urld_ds3, "acc=GSE161731", "file=GSE161731_raw_counts_GRCh38.p13_NCBI.tsv.gz", sep="&");
 tbl_ds3 <- as.data.frame(as.matrix(data.table::fread(path_ds3, header=T, colClasses="integer"), rownames=1))
 ```
 
-Pre-Cleaning Meta.Data
+**Pre-Cleaning Meta.Data**
+
+In some parts this data there is a note that explicity tells the used to excise certain samples at the end of GSE1617116's preprocessing we will delete those rows
 
 ```{r}
-View(meta_161731)
+bad_samples <- c(meta_161731$geo_accession[
+  meta_161731$description %in% "excluded from analyses for poor data quality"
+])
+```
+
+```{r}
+bad_samples
 ```
 
 |     |
@@ -493,15 +518,27 @@ meta_161731_edit <- meta_161731 %>%
   #time collected, making it a longitudinal study
   mutate(characteristics_ch1.5 = gsub("time_since_onset: ", "", characteristics_ch1.5)) %>%
   rename(time_point = characteristics_ch1.5) %>%
-  
- # dplyr::filter(time_point %in% 'NA') %>%
 
-  dplyr::filter(description != 'excluded from analyses for poor data quality') %>%
+  # We slice off three rows to be excluded from the data which is why the row count in this decreases from 198 to 195 samples
   
   # Batch (Converted to Integer)
-  dplyr::select(geo_accession, gender, race, condition, batch_num, age, time_point)
+  dplyr::select(geo_accession, gender, race, description, condition, batch_num, age, time_point) %>%
+  
+  mutate(
+  condition = tolower(condition),
+  condition = gsub("cov other", "covother", condition)
+)
+#convert all columns into factor type
+meta_161731_edit[] <- lapply(meta_161731_edit, factor)
+
 
 meta_161731_edit
+```
+
+```{r}
+meta_161731_edit %>% 
+  group_by(condition) %>% 
+  summarise(count = n())
 ```
 
 ### Mapping Sample Name to Condition
@@ -517,7 +554,8 @@ tbl_ds3
 ```
 
 ```{r}
-length(colnames(tbl_ds3))
+tbl_ds3
+meta_161731_edit
 ```
 
 ```{r}
@@ -606,7 +644,9 @@ if (length(missing_ids) > 0){
 
 missing_ids <- names(final_results)[is.na(final_results)]
 length(missing_ids)
+```
 
+```{r}
 mapping_df <- data.frame(geneid = names(final_results),
                          ensembl_id = as.character(final_results))
 
@@ -621,23 +661,34 @@ final_tbl_ds3 <- final_tbl_ds3[complete.cases(final_tbl_ds3),]
 final_tbl_ds3 <- final_tbl_ds3 %>%
     group_by(ensembl_id) %>%
     summarise(across(where(is.numeric), sum)) %>%
-    column_to_rownames(var = "ensembl_id")
+    column_to_rownames(var = "ensembl_id") %>%
+    dplyr::select(-matches(bad_samples))
 ```
 
 ```{r}
 #final meta_data editing
 meta_161731_edit$samples <- paste0(meta_161731_edit$geo_accession, "_", meta_161731_edit$condition)
 meta_161731_edit <- meta_161731_edit %>% 
+  dplyr::filter(description != 'excluded from analyses for poor data quality') %>%
   relocate(samples, .after = geo_accession) %>% 
   dplyr::select(samples, gender, race, condition, batch_num, age) %>%
   separate(samples, 
            into = c("sample_id", "condition"),
            sep = "_")
 rownames(meta_161731_edit) <- NULL
+
+
+#final edits of the metadata
+meta_161731_edit$samples <- paste0(meta_161731_edit$sample_id, "_", meta_161731_edit$condition)
+
+meta_161731_edit[] <- lapply(meta_161731_edit, factor)
+
+rownames(meta_161731_edit) <- meta_161731_edit$samples
 ```
 
 ```{r}
 meta_161731_edit
+final_tbl_ds3
 ```
 
 ```{r}
@@ -657,6 +708,13 @@ assayNames(covid19_ds3)[3] <- "log_counts"
 
 ```{r}
 saveRDS(covid19_ds3, "./post_processed_data/gse161731_covid19_ds3.rds")
+```
+
+```{r}
+missing_samples <- rownames(meta_161731_edit)[
+  !(rownames(meta_161731_edit) %in% colnames(final_tbl_ds3))
+]
+missing_samples
 ```
 
 # Reading in GSE227116
@@ -716,12 +774,17 @@ meta_227116_edit <- meta_227116 %>%
     condition = tolower(condition),
     condition = gsub("covid-19", "", condition),
     condition = trimws(condition),
-    condition = gsub("s$", "", condition)
+    condition = gsub("s$", "", condition),
+    conition = tolower(condition)
   ) %>%
   mutate(samples = paste0(geo_accession, "_", condition)) %>% 
   dplyr::select(geo_accession, samples, "time point:ch1", condition) %>%
   rename(time_point = "time point:ch1")
 rownames(meta_227116_edit) <- meta_227116_edit$samples
+
+
+meta_227116_edit[] <- lapply(meta_227116_edit, factor)
+
 ```
 
 ```{r}
@@ -820,7 +883,9 @@ length(missing_ids)
 
 mapping_df <- data.frame(geneid = names(final_results),
                          ensembl_id = as.character(final_results))
+```
 
+```{r}
 final_tbl_ds4 <- tbl_ds4 %>% 
   left_join(., mapping_df, by = "geneid") %>%
   dplyr::relocate(ensembl_id, .after = "geneid")
@@ -833,6 +898,11 @@ final_tbl_ds4 <- final_tbl_ds4 %>%
     group_by(ensembl_id) %>%
     summarise(across(where(is.numeric), sum)) %>%
     column_to_rownames(var = "ensembl_id")
+```
+
+```{r}
+meta_227116_edit
+final_tbl_ds4
 ```
 
 ```{r}
@@ -859,4 +929,237 @@ assayNames(covid19_ds4)[3] <- "log_counts"
 
 ```{r}
 saveRDS(covid19_ds4, "./post_processed_data/gse227116_covid19_ds4.rds")
+```
+
+# Reading in GSE152418
+
+Illumina NovaSeq 6000
+
+PBMC
+
+17 COVID-19, Healthy Controls-17
+
+Total Samples = 34
+
+```{r}
+gse_152418 <- getGEO("GSE152418", GSEMatrix = TRUE)
+
+gse_152418 <- gse_152418[[1]]
+
+expr_152418 <- exprs(gse_152418)
+
+meta_152418 <- pData(gse_152418)
+
+head(expr_152418)
+head(meta_152418)
+
+getGEOSuppFiles("GSE152418")
+```
+
+```{r}
+library(glue)
+warned <- FALSE
+acc_num <- "GSE152418"
+
+url_ds5 <- "https://www.ncbi.nlm.nih.gov/geo/download/?format=file&type=rnaseq_counts"
+
+path_ds5 <- paste(url_ds5, glue("acc={acc_num}"), glue("file={acc_num}_raw_counts_GRCh38.p13_NCBI.tsv.gz"), sep="&");
+
+
+
+tbl_ds5 <- tryCatch(
+
+  {
+    as.matrix(data.table::fread(path_ds5, header=T, colClasses="integer"), rownames=1) %>% as.data.frame()
+  },
+
+  warning = function(w){
+
+    message("Initial call unsuccessful. Using local GEO file.")
+
+    path_ds5 <- list.files(acc_num , recursive = TRUE , full.names = TRUE)[1]
+
+    as.matrix(data.table::fread(path_ds5, header=T, colClasses="integer"), rownames=1) %>% as.data.frame()
+  }
+
+)
+```
+
+```{r}
+meta_152418
+tbl_ds5
+```
+
+Meta_Data Editing
+
+```{r}
+meta_152418_edit <- meta_152418 %>%
+  rename(condition = 'disease state:ch1') %>% 
+  rename(days_post_symptom_onset = `days_post_symptom_onset:ch1`) %>%
+  rename(severity = `severity:ch1`) %>%
+  mutate(
+    condition = tolower(condition),
+    condition = trimws(condition),
+    condition = gsub("s$", "", condition),
+    condition = tolower(condition),
+    condition = gsub("covid-19", "covid19", condition)
+  ) %>%
+  mutate(samples = paste0(geo_accession, "_", condition)) %>% 
+  dplyr::select(geo_accession, samples, condition, `days_post_symptom_onset`
+, `severity`)
+
+meta_152418[] <- lapply(meta_152418, factor)
+
+rownames(meta_152418_edit) <- NULL
+
+meta_152418_edit <- meta_152418_edit %>%
+  column_to_rownames("samples")
+
+
+mapping <- rownames(meta_152418_edit)
+names(mapping) <- colnames(tbl_ds5)
+colnames(tbl_ds5) <- mapping
+tbl_ds5 <- rownames_to_column(tbl_ds5,"geneid")
+```
+
+```{r}
+meta_152418_edit
+```
+
+```{r}
+# initial args
+from_type <- "ENTREZ"
+
+to_type <- "ENSEMBL"
+
+org_db <- org.Hs.eg.db
+
+# Harmoizing between each of the available annotation functions
+harmonizer <- list(
+    ENTREZ = list(local = "ENTREZID", biomart = "entrezgene_id", gconvert = "ENTREZGENE_ACC"),
+    ENSEMBL = list(local = "ENSEMBL",  biomart = "ensembl_gene_id", gconvert = "ENSG"),
+    SYMBOL  = list(local = "SYMBOL",   biomart = "external_gene_name",
+                   gconvert = "SYMBOL")
+  )
+
+local_from   <- harmonizer[[from_type]]$local
+local_to     <- harmonizer[[to_type]]$local
+  
+biomart_from <- harmonizer[[from_type]]$biomart
+biomart_to   <- harmonizer[[to_type]]$biomart
+
+
+
+
+unique_ids <- unique(tbl_ds5$geneid)
+
+
+#Intialize final results
+unique_ids_len <- length(unique_ids)
+
+final_results <- c(replicate(unique_ids_len, NA))
+
+names(final_results) <- unique_ids
+
+#Converting EntrezIDs into Symbols
+id_chunks <- split(unique_ids, ceiling(seq_along(unique_ids) / 10000))
+
+for(i in seq_along(id_chunks)){
+  chunk_map <- AnnotationDbi::mapIds(org_db, 
+                      keys = id_chunks[[i]],
+                      keytype = local_from,
+                      column =   local_to,
+                      multiVals = "first")
+  #updating the inital final results
+  final_results[names(chunk_map)] <- chunk_map
+}
+
+
+
+#Converting EntrezIDs into Symbols
+id_chunks <- split(unique_ids, ceiling(seq_along(unique_ids) / 10000))
+
+for(i in seq_along(id_chunks)){
+  chunk_map <- AnnotationDbi::mapIds(org_db, 
+                      keys = id_chunks[[i]],
+                      keytype = local_from,
+                      column =   local_to,
+                      multiVals = "first")
+  #updating the inital final results
+  final_results[names(chunk_map)] <- chunk_map
+}
+
+final_results <- unlist(final_results)
+missing_ids <- names(final_results)[is.na(final_results)]
+length(missing_ids)
+
+
+
+if (length(missing_ids) > 0){
+  
+      layer2 <- getBM(
+        attributes = c(biomart_from, biomart_to),
+        filters = biomart_from,
+        values = missing_ids,
+        mart = useMart("ensembl", dataset = "hsapiens_gene_ensembl")
+      )
+      layer2
+  if(nrow(layer2) > 0) {
+    indices <- match(layer2[[biomart_from]], names(final_results))
+    final_results[indices] <- layer2[[biomart_to]]
+  }
+}
+
+missing_ids <- names(final_results)[is.na(final_results)]
+length(missing_ids)
+```
+
+```{r}
+mapping_df <- data.frame(geneid = names(final_results),
+                         ensembl_id = as.character(final_results))
+
+final_tbl_ds5 <- tbl_ds5 %>% 
+  left_join(., mapping_df, by = "geneid") %>%
+  dplyr::relocate(ensembl_id, .after = "geneid")
+
+#Slicing Rows with any NAs within the Data
+final_tbl_ds5 <- final_tbl_ds5[complete.cases(final_tbl_ds5),]
+
+
+final_tbl_ds5 <- final_tbl_ds5 %>%
+    group_by(ensembl_id) %>%
+    summarise(across(where(is.numeric), sum)) %>%
+    column_to_rownames(var = "ensembl_id")
+```
+
+```{r}
+covid19_ds5 <- make_dds(final_tbl_ds5, metadata = meta_152418_edit, ah_record = "AH89426")
+#renaming counts to raw counts
+assayNames(covid19_ds5)[1] <- "counts"
+
+#variance stabilized Raw counts
+assays(covid19_ds5)[[2]] <- vst(covid19_ds5@assays@data$counts)
+assayNames(covid19_ds5)[2] <- "var_stable"
+
+#log_transformed (log normalized counts)
+assays(covid19_ds5)[[3]] <- log10(covid19_ds5@assays@data$counts + 1)
+assayNames(covid19_ds5)[3] <- "log_counts"
+```
+
+```{r}
+saveRDS(covid19_ds5, "./post_processed_data/gse152418_covid19_ds5.rds")
+```
+
+```{r}
+missing_samples <- rownames(meta_161731_edit)[
+  !(rownames(meta_152418_edit) %in% colnames(final_tbl_ds5))
+]
+missing_samples
+
+missing_samples <- rownames(meta_152418_edit)[
+  !(rownames(meta_152418_edit) %in% colnames(final_tbl_ds5))
+]
+missing_samples
+
+
 ```

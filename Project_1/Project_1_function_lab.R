@@ -19,6 +19,7 @@ pc_var_association <- function(bulk_ds){
   #creating a list of possible covariate to compare with PCs
   meta_data <- as.data.frame(bulk_ds@colData)
   
+  meta_data[] <- lapply(meta_data, factor)
   
   covars <- split(meta_data, 
                   rep(1:ncol(meta_data),
@@ -30,11 +31,11 @@ pc_var_association <- function(bulk_ds){
   names(covars) <- colnames(meta_data)
   
   
-  
-  
   get_p_value <- function(pc_vector, var) {
     
+    
     valid <- !is.na(pc_vector) & !is.na(var)
+    
     pc_vector <- pc_vector[valid]
     var_vector <- var[valid]
     
@@ -49,13 +50,13 @@ pc_var_association <- function(bulk_ds){
       anova_sum <- summary(fit)[[1]]
       p_val <- anova_sum[1, "Pr(>F)"]
       
-      if (is.null(p_val) || length(p_val) != 1) {
+      if (length(p_val) != 1 || is.na(p_val) || is.nan(p_val) || is.infinite(p_val)) {
         return(NA)
       }
       return(p_val)
+      
     }
   }
-  
   
   p_matrix <- matrix(NA, 
                      nrow = length(covars), 
@@ -64,20 +65,38 @@ pc_var_association <- function(bulk_ds){
   
   
   for(vars in names(covars)){
-    for(pcs in colnames(top_pcs)){
+    
+    current_var <- covars[[vars]]
+    
+    if (is.factor(current_var)) {
+      n_levels <- nlevels(current_var)
+    } else {
+      n_levels <- length(unique(current_var))
+    }
+    if (n_levels < 2) next
+    
+    for (pcs in colnames(top_pcs)) {
       
-      current_var <- covars[[vars]]
       current_pc <- top_pcs[, pcs]
-      
       
       p_matrix[vars, pcs] <- get_p_value(current_pc, current_var)
     }
   }
   
-  log_p_matrix <- -log10(p_matrix) %>% as.data.frame() %>% na.omit()
+  log_p_matrix <- -log10(p_matrix)
+  
+  max_finite <- max(log_p_matrix[is.finite(log_p_matrix)])
+  
+  log_p_matrix[is.infinite(log_p_matrix)] <- max_finite + 1
+  
+  log_p_matrix <- log_p_matrix[!apply(is.na(p_matrix), 1 , all), ]
   
   # 5. Plot the heatmap
-  p_val_map <-pheatmap(log_p_matrix,  cluster_rows=F, cluster_cols=F, main = "Correlation between of MetaVar X within PCX") 
+  p_val_map <- pheatmap(log_p_matrix, 
+                        legend_labels = "log10(pvalue)",
+                        cluster_rows=F, 
+                        cluster_cols=F, 
+                        main = "PC-Metadata Associations (-log10(p-value))") 
   return(p_val_map)
 }
 
@@ -256,6 +275,7 @@ volcano_plot <- function(diffexp_df,
   
   library(ggrepel)
   library(ggplot2)
+  library(dplyr)
   
 volcano_df <- diffexp_df %>%
     mutate(
@@ -266,8 +286,8 @@ volcano_df <- diffexp_df %>%
       )
     )
 
-deg_df <- volcano_df %>%
-  filter(color != "Not Significant")
+    deg_df <- volcano_df %>%
+      dplyr::filter(color != "Not Significant")
   
   
   volplot <- ggplot(volcano_df) +
@@ -449,7 +469,7 @@ gene_id_converter_ver2 <- function(vector, from_type, to_type, ensembl_datset){
   #initialize the return and parameters
   #baseline NULL intialization
   return_df <- NULL
-  max_attempts <- 10
+  max_attempts <- 2
   attempt <- 1
   org_db <- org.Hs.eg.db
   
@@ -518,13 +538,14 @@ heatmap_function <- function(initial_table, table_list) {
   
   require(colorRamp2)
   require(ComplexHeatmap)
+  require(circlize)
   
   # Initialize the list to store heatmap objects
   heatmap_list <- list()
   
   # Extract the raw count matrix once outside the loop for efficiency
   # Assumes a SingleCellExperiment or SummarizedExperiment-like structure
-  expr_raw <- as.matrix(initial_table@assays@data$counts)
+  expr_raw <- as.matrix(initial_table@assays@data$log_counts)
   
   #Early stopping points just in case
   if (any(is.na(colnames(expr_raw)))) stop("NA column names in expr_raw")
@@ -547,6 +568,9 @@ heatmap_function <- function(initial_table, table_list) {
     #itemizing the names of the
     ctrl_name      <- ctrl_treatment[1]
     treatment_name <- ctrl_treatment[2]
+    
+    
+    
     # Message tracking
     message(glue::glue("Processing: {ctrl_name} vs {treatment_name}"))
     
@@ -619,12 +643,34 @@ heatmap_function <- function(initial_table, table_list) {
     
     # THIS IS A RISKY MOVE BUT IT WILL MAKE THE HEATMAP A LOT CLEANER
     # PROS: IT WILL MAKE THE HEATMAP CLEANER
-    # CONS: IT MAY REMOVE BIOLOGICAL SIGNAL FOR A GENE: COULD BE EXPLAINED BY WARIANTS OF THE SAME GENE
+    # CONS: IT MAY REMOVE BIOLOGICAL SIGNAL FOR A GENE: COULD BE EXPLAINED BY VARIANTS OF THE SAME GENE
     expr_z <- expr_z[!duplicated(rownames(expr_z)), ]
     
     
     gene_dist <- dist(expr_z)
     gene_hclust <- hclust(gene_dist)
+    
+    #____________________________________________________#
+    #Sample Color Annotation Block
+    sample_condition <- c(sub(".*_", "", colnames(expr_z)))
+
+  
+    condition_levels <- unique(sample_condition)
+    
+    
+    #Setting colors for the chosen disease states
+    condition_cols <- setNames(
+      scales::hue_pal()(length(condition_levels)),
+      condition_levels
+    )
+    
+    #Using HeatmapAnnotation
+    HA <- HeatmapAnnotation(
+      Condition = sample_condition,
+      col = list(Condition = condition_cols)
+    )
+    
+    #____________________________________________________#
     
     # Define color palette
     col_fun <- colorRamp2(c(-2, 0, 2), c("blue", "white", "red"))
@@ -643,6 +689,9 @@ heatmap_function <- function(initial_table, table_list) {
       cluster_columns = TRUE,     
       cluster_rows    = TRUE, # To use your manual cluster, change to: cluster_rows = gene_hclust     
       row_names_gp    = gpar(fontsize = 12),
+      top_annotation  = HA,
+      show_row_dend   =  FALSE,
+      show_column_names = FALSE,
       row_gap         = unit(5, "mm"),
       column_title    = glue::glue("{ctrl_name} - {treatment_name} Diff Exp Genes")
     )
@@ -658,9 +707,9 @@ ora_dotplot <- function(ora_results, gspval_cutoff, org_by, num_disp, graph_titl
   if(org_by %in% 'Count'){
     #inside if
     dotplot <- ora_results%>%
-      arrange(desc(Count))%>%
-      head(num_disp)%>%
-      mutate(as.factor(Description))%>%
+      dplyr::arrange(desc(Count))%>%
+      utils::head(num_disp)%>%
+      dplyr::mutate(as.factor(Description))%>%
       ggplot() +
       aes(y = Count, x = fct_reorder(Description, Count)) +
       scale_colour_gradient(low = "red", high = "blue") +
@@ -673,10 +722,10 @@ ora_dotplot <- function(ora_results, gspval_cutoff, org_by, num_disp, graph_titl
   if(org_by %in% 'pvalue'){
     #inside if
     dotplot <- ora_results %>%
-      filter(pvalue < gspval_cutoff) %>%
-      head(num_disp) %>%
-      mutate(as.factor(Description)) %>%
-      mutate(pvalue = -1 * log(pvalue)) %>%
+      dplyr::filter(pvalue < gspval_cutoff) %>%
+      utils::head(num_disp) %>%
+      dplyr::mutate(as.factor(Description)) %>%
+      dplyr::mutate(pvalue = -1 * log(pvalue)) %>%
       ggplot() +
       aes(x = pvalue, y = fct_reorder(Description, pvalue))+
       scale_colour_gradient(low = "red", high = "blue") +
