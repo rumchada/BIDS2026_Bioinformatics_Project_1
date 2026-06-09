@@ -1,0 +1,168 @@
+heatmap_function <- function(initial_table, table_list) {
+
+  require(colorRamp2)
+  require(ComplexHeatmap)
+  require(circlize)
+
+  # Initialize the list to store heatmap objects
+  heatmap_list <- list()
+
+  # Extract the raw count matrix once outside the loop for efficiency
+  # Assumes a SingleCellExperiment or SummarizedExperiment-like structure
+  expr_raw <- as.matrix(initial_table@assays@data$log_counts)
+
+  #Early stopping points just in case
+  if (any(is.na(colnames(expr_raw)))) stop("NA column names in expr_raw")
+  if (any(duplicated(colnames(expr_raw)))) stop("Duplicate column names in expr_raw")
+
+  # Loop through the list of filtered differential expression results
+  for (i in seq_along(table_list)) {
+
+    # Grab the ith table
+    filtered_diff_exp_results <- table_list[[i]]
+
+    if (!"geneid" %in% colnames(filtered_diff_exp_results)) {
+      stop(glue::glue("Missing geneid column in {names(table_list)[i]}"))
+      print(colnames(filtered_diff_exp_results))
+    }
+
+    # Split the names of the ctrl-treatment comparison
+    comparison_name <- names(table_list)[i]
+    ctrl_treatment <- strsplit(comparison_name, "-")[[1]]
+    #itemizing the names of the
+    ctrl_name      <- ctrl_treatment[1]
+    treatment_name <- ctrl_treatment[2]
+
+
+
+    # Message tracking
+    message(glue::glue("Processing: {ctrl_name} vs {treatment_name}"))
+
+
+
+    # Pull the differentially expressed gene IDs
+    diffexp_geneids <- unique(as.character(filtered_diff_exp_results$geneid))
+
+    print(length(diffexp_geneids))
+
+    genes_found <- diffexp_geneids %in% rownames(expr_raw)
+
+    validated_geneids <- diffexp_geneids[genes_found]
+
+
+    if (sum(genes_found) == 0) {
+      stop(glue::glue(
+        "No DE genes found in expression matrix for {comparison_name}"
+      ))
+    }
+
+    if (sum(genes_found) < length(diffexp_geneids) * 0.5) {
+      warning(glue::glue(
+        "Less than 50% of DE genes found in matrix for {comparison_name}"
+      ))
+    }
+
+    # Filter the matrix for the target genes and matching sample columns
+    # Note: Added anchors to ensure exact suffix matching
+    col_pattern <- glue::glue("_{ctrl_name}$|_{treatment_name}$")
+    matching_cols <- grepl(col_pattern, colnames(expr_raw))
+
+    expr <- expr_raw[validated_geneids, matching_cols, drop = FALSE]
+
+    message(glue("Comparison:{ctrl_name} vs {treatment_name} has {nrow(expr)} DEGs"))
+
+    # Scaling and z-score normalizing the counts matrix
+    expr_z <- t(scale(t(expr)))
+    expr_z[is.na(expr_z)] <- 0
+    expr_z[!is.finite(expr_z)] <- 0
+    rownames(expr_z) <- rownames(expr)
+    colnames(expr_z) <- colnames(expr)
+
+    # Gene ID conversion
+    #Quality check of the number of DEGs matched from raw_expr table that were z-scaled
+    message(glue("Comparison:{ctrl_name} vs {treatment_name} has {nrow(expr_z)} DEGs"))
+
+
+    conversion_table <- gene_id_converter_ver2(
+      rownames(expr_z),
+      "ensembl",
+      "symbol",
+      "hsapiens_gene_ensembl"
+    )
+
+    gene_map <- setNames(
+      conversion_table$external_gene_name,
+      conversion_table$ensembl_gene_id
+    )
+
+    new_names <- gene_map[rownames(expr_z)]
+
+    # Fallback to Ensembl ID if no symbol is found
+    rownames(expr_z) <- ifelse(is.na(new_names), rownames(expr_z), new_names)
+
+
+    # Clustering data (Optional: ComplexHeatmap does this natively if cluster_rows = TRUE,
+    # but kept if you intend to pass hclust objects explicitly)
+
+
+    # THIS IS A RISKY MOVE BUT IT WILL MAKE THE HEATMAP A LOT CLEANER
+    # PROS: IT WILL MAKE THE HEATMAP CLEANER
+    # CONS: IT MAY REMOVE BIOLOGICAL SIGNAL FOR A GENE: COULD BE EXPLAINED BY VARIANTS OF THE SAME GENE
+    expr_z <- expr_z[!duplicated(rownames(expr_z)), ]
+
+
+    gene_dist <- dist(expr_z)
+    gene_hclust <- hclust(gene_dist)
+
+    #____________________________________________________#
+    #Sample Color Annotation Block
+    sample_condition <- c(sub(".*_", "", colnames(expr_z)))
+
+
+    condition_levels <- unique(sample_condition)
+
+
+    #Setting colors for the chosen disease states
+    condition_cols <- setNames(
+      scales::hue_pal()(length(condition_levels)),
+      condition_levels
+    )
+
+    #Using HeatmapAnnotation
+    HA <- HeatmapAnnotation(
+      Condition = sample_condition,
+      col = list(Condition = condition_cols)
+    )
+
+    #____________________________________________________#
+
+    # Define color palette
+    col_fun <- colorRamp2(c(-2, 0, 2), c("blue", "white", "red"))
+
+    # THIS IS A RISKY MOVE BUT IT WILL MAKE THE HEATMAP A LOT CLEANER
+
+    # Gene ID conversion
+    #Quality check of the number of DEGs matched from raw_expr table that were z-scaled
+    message(glue("Comparison:{ctrl_name} vs {treatment_name} has {nrow(expr_z)} UNIQUE DEGs"))
+
+    # Generate Heatmap object
+    p <- Heatmap(
+      expr_z,
+      name            = "Z-score",
+      col             = col_fun,
+      cluster_columns = TRUE,
+      cluster_rows    = TRUE, # To use your manual cluster, change to: cluster_rows = gene_hclust
+      row_names_gp    = gpar(fontsize = 12),
+      top_annotation  = HA,
+      show_row_dend   =  FALSE,
+      show_column_names = FALSE,
+      row_gap         = unit(5, "mm"),
+      column_title    = glue::glue("{ctrl_name} - {treatment_name} Diff Exp Genes")
+    )
+
+    # Store the plot object into the initialized list
+    heatmap_list[[comparison_name]] <- p
+  }
+
+  return(heatmap_list)
+}

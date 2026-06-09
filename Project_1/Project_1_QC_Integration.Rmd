@@ -16,7 +16,8 @@ library(org.Hs.eg.db)
 library(DESeq2)
 library(clusterProfiler)
 library(RNAseqQC)
-source("Project_1_function_lab.R")
+library(bulkanalysis)
+#source("Project_1_function_lab.R")
 ```
 
 # Reading in the files

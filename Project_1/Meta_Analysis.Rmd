@@ -1,0 +1,529 @@
+---
+title: "Meta_Analysis"
+output: html_document
+date: "2026-06-06"
+---
+
+```{r, include =FALSE}
+library(tidyverse)
+library(glue)
+library(devtools)
+library(vroom)
+library(GEOquery)
+library(biomaRt)
+library(dplyr)
+library(org.Hs.eg.db)
+library(DESeq2)
+library(clusterProfiler)
+library(RNAseqQC)
+library(edgeR)
+library(ggvenn)
+source("Project_1_function_lab.R")
+```
+
+# Loading Downstream Results from Intra and Inter Differential Experssion.
+
+```{r}
+
+full_path <- "/Users/gbolden/Desktop/SPG2026/BIDS_2026/Project_1"
+
+load(glue::glue("{full_path}/downstream_results/covid19_ds1_analysis.RData"))
+
+load(glue::glue("{full_path}/downstream_results/covid19_ds2_analysis.RData"))
+
+load(glue::glue("{full_path}/downstream_results/covid19_ds3_analysis.RData"))
+
+load(glue::glue("{full_path}/downstream_results/covid19_ds4_analysis.RData"))
+
+load(glue::glue("{full_path}/downstream_results/covid19_ds5_analysis.RData"))
+
+load("/Users/gbolden/Desktop/SPG2026/BIDS_2026/Project_1/downstream_results/covid_ds12345_integrated.RData")
+```
+
+# Summarizing Total DEGs per Dataset
+
+```{r}
+
+deg_summary <- function(deg_comps){
+  summary_table <- list()
+  
+  for(comp in names(deg_comps)) {
+  
+    tbl <- deg_comps[[comp]] %>%
+      dplyr::count(color, name = comp) %>%
+      tibble::column_to_rownames("color")
+  
+    tbl <- rbind(
+      tbl,
+      total_DEGs = colSums(tbl)
+    )
+    summary_table[[comp]] <- tbl
+  }
+  
+  summary_table <- do.call(cbind, summary_table)
+  
+  return(summary_table)
+}
+
+
+all_summaries <- lapply(
+  list(
+    gse202805 = covid19_ds1_analysis$filtered_results,
+    gse152641 = covid19_ds2_analysis$filtered_results,
+    gse161731 = covid19_ds3_analysis$filtered_results,
+    gse227116 = covid19_ds4_analysis$filtered_results,
+    gse152418 = covid19_ds5_analysis$filtered_results,
+    dsint = covid19_ds124_analysis$filtered_results
+  ),
+  deg_summary
+)
+```
+
+```{r}
+transposed_summaries <- lapply(all_summaries, t)
+transposed_summaries <- lapply(transposed_summaries, as.data.frame)
+
+long_tbl <- imap_dfr(
+  transposed_summaries,
+  ~ .x %>%
+      rownames_to_column("comparison") %>%
+      mutate(dataset = .y)
+)
+long_tbl
+
+
+long_tbl %>%
+  ggplot(aes(x = comparison, y = total_DEGs, fill = dataset)) +
+  geom_col() +
+  theme(
+    axis.text.x = element_text(angle = 60, hjust = 1)
+  ) +
+  labs(
+    title = "Total DEGs Across Comparisons per Dataset",
+    x = "Comparison",
+    y = "Total DEGs"
+  )
+
+
+long_tbl %>%
+  ggplot(aes(x = comparison, y = Downregulated, fill = dataset)) +
+  geom_col() +
+  theme(
+    axis.text.x = element_text(angle = 60, hjust = 1)
+  ) +
+  labs(
+    title = "Uppregulated DEGs Across Comparisons per Dataset",
+    x = "Comparison",
+    y = "Total DEGs"
+  )
+
+long_tbl %>%
+  ggplot +
+  aes(x = comparison, y = Upregulated, fill = dataset) +
+ geom_col() +
+  theme(
+    axis.text.x = element_text(angle = 60, hjust = 1)
+  ) +
+  labs(
+    title = "Downregulated DEGs Across Comparisons per Dataset",
+    x = "Comparison",
+    y = "Total DEGs"
+  )
+
+```
+
+# Total DEGs per Dataset
+
+```{r}
+plot_tbl <- long_tbl %>%
+  pivot_longer(
+    cols = c(Downregulated, Upregulated, total_DEGs),
+    names_to = "DEG_type",
+    values_to = "count"
+  )
+plot_tbl
+```
+
+```{r}
+plot_tbl %>%
+  filter(DEG_type != "total_DEGs") %>%
+  ggplot(aes(x = comparison, y = count, fill = DEG_type)) +
+  geom_col() +
+  scale_fill_manual(values = c(
+    "Upregulated" = "red",
+    "Downregulated" = "blue"
+  )) +
+  facet_wrap(~ dataset) +
+  theme(
+    axis.text.x = element_text(angle = 60, hjust = 1, vjust = 1, size = 10, face = "bold"),
+    strip.text = element_text(face = "bold", size = 10),
+    plot.title = element_text(hjust = 0.5, size = 20, face = "bold")
+  ) +
+  labs(title = "DEGs per Comparison by Dataset",
+       y = "Number of DEGs")
+```
+
+# Total DEG and ORA Overlaps
+
+if the comparison exists within those dataset
+
+```{r}
+deg_results_list <- list(
+    gse202805 = covid19_ds1_analysis$filtered_results,
+    gse152641 = covid19_ds2_analysis$filtered_results,
+    gse161731 = covid19_ds3_analysis$filtered_results,
+    gse227116 = covid19_ds4_analysis$filtered_results,
+    gse152418 = covid19_ds5_analysis$filtered_results,
+    dsint = covid19_ds124_analysis$filtered_results
+)
+
+# initialize output list
+all_degs <- vector("list", length(deg_results_list))
+names(all_degs) <- c("GSE202805", 
+                     "GSE152641",
+                     "GSE161731",
+                     "GSE227116",
+                     "GSE152418", 
+                     "Integrated")
+
+# loop through each dataset
+for (j in seq_along(deg_results_list)) {
+  
+  current_dataset <- deg_results_list[[j]]
+  current_genes <- c()
+  
+  # loop through each DEG table in the dataset
+  for (i in seq_along(current_dataset)) {
+    
+    current_genes <- c(
+      current_genes,
+      current_dataset[[i]]$geneid
+    )
+  }
+  
+  # optionally remove duplicates
+  all_degs[[j]] <- unique(current_genes)
+}
+
+
+ggvenn(all_degs[names(all_degs) != "Integrated"],
+       show_percentage = FALSE,
+       text_size = 5)
+
+#Finding the most frequencted DEGS for all Dataset
+core_genes <- Reduce(intersect, all_degs)
+
+length(core_genes)
+head(core_genes)
+
+gene_freq <- table(unlist(all_degs))
+
+shared_5plus <- names(gene_freq[gene_freq >= 5])
+length(shared_5plus)
+```
+
+What are those 60 DEGs
+
+```{r}
+
+intersection_assignments <- all_degs %>%
+  enframe(name = "set", value = "geneid") %>%
+  unnest(geneid) %>%
+  group_by(geneid) %>%
+  summarize(Intersection = paste(sort(set), collapse = " & "))
+
+# Split into a clean list of genes per intersection group
+genes_by_intersection <- split(intersection_assignments$geneid, intersection_assignments$Intersection)
+
+genes_by_intersection$`dsint & gse152418 & gse152641 & gse161731 & gse202805`
+genes_by_intersection$`dsint & gse152418 & gse152641 & gse202805`
+genes_by_intersection$`dsint & gse152418 & gse152641 & gse161731`
+
+```
+
+### Overlapping Overrepresented Terms
+
+```{r}
+ora_desc_collapse_fxn <- function(unpacked_results){
+  ora_desc_list <- vector("list", length(unpacked_results))
+  names(ora_desc_list) <- names(unpacked_results)
+  
+  for(i in seq_along(unpacked_results)) {
+    
+    # for each comparison within the unpacked results
+    current_comparison <- unpacked_results[[i]]
+    
+    ora_descriptions <- c()
+    
+    # for each table within that specific comparison
+    for(j in seq_along(current_comparison)) {
+      
+      ora_descriptions <- c(
+        ora_descriptions,
+        current_comparison[[j]]$gene_desc.x
+      )
+    }
+    
+    ora_desc_list[[i]] <- unique(ora_descriptions)
+  }
+  return(ora_desc_list)
+}
+```
+
+```{r}
+analysis_list <- list(
+  GSE202805  = covid19_ds1_analysis,
+  GSE152641  = covid19_ds2_analysis,
+  GSE161731  = covid19_ds3_analysis,
+  GSE227116  = covid19_ds4_analysis,
+  GSE152418  = covid19_ds5_analysis,
+  Integrated = covid19_ds124_analysis
+)
+
+all_ora_terms <- lapply(analysis_list, function(x) {
+  c(
+    up   = ora_desc_collapse_fxn(x$unpacked_results_up),
+    down = ora_desc_collapse_fxn(x$unpacked_results_down)
+  ) %>% unlist()
+})
+
+ggvenn(all_ora_terms[1:5])
+
+
+#Finding the most frequencted DEGS for all Dataset
+core_ora_terms <- Reduce(intersect, all_ora_terms[1:5])
+
+length(core_ora_terms)
+head(core_ora_terms)
+
+gene_freq <- table(unlist(all_degs))
+
+shared_5plus <- names(gene_freq[gene_freq >= 5])
+length(shared_5plus)
+```
+
+### Unpacking the universally shared ORAs
+
+```{r}
+#Finding the most frequencted DEGS for all Dataset
+core_ora_terms <- Reduce(intersect, all_ora_terms[1:5])
+
+length(core_ora_terms)
+core_ora_terms
+
+gene_freq <- table(unlist(core_ora_terms))
+
+shared_5plus <- names(gene_freq[core_ora_terms >= 5])
+length(shared_5plus)
+```
+
+# **Healthy-Covid19 Comparison Across Dataset**
+
+Comparison Upregulated and Down-Regulated DEGs across the Datasets for the most common comparison: Healthy-Covid19.
+
+```{r}
+library(UpSetR)
+deg_results_list <- list(
+    gse202805 = covid19_ds1_analysis$filtered_results$`healthy-covid19`,
+    gse152641 = covid19_ds2_analysis$filtered_results$`healthy-covid19`,
+    gse161731 = covid19_ds3_analysis$filtered_results$`healthy-covid19`,
+    gse152418 = covid19_ds5_analysis$filtered_results$`healthy-covid19`,
+    dsint = covid19_ds124_analysis$filtered_results$`healthy-covid19`
+)
+
+#Nested Upregulated and Downregulated DEGs for each dataset with comparison health-covid19
+up_reg_degs   <- list()
+down_reg_degs <- list()
+all_degs      <- list()
+
+for(dataset in names(deg_results_list)){
+  up_reg_degs[[dataset]]   <- list()
+  down_reg_degs[[dataset]] <- list()
+  all_degs[[dataset]]      <- list()
+  
+    
+  deg_tbl <- deg_results_list[[dataset]]
+
+  up_reg_degs[[dataset]] <-
+      unique(deg_tbl$geneid[deg_tbl$log2foldchange > 1])
+
+    down_reg_degs[[dataset]] <-
+      unique(deg_tbl$geneid[deg_tbl$log2foldchange < -1])
+
+  all_degs[[dataset]] <-
+      unique(deg_tbl$geneid)
+}
+
+#Upset Plots of the DEGs
+up_reg_degs_upsetdata <- UpSetR::fromList(up_reg_degs)
+UpSetR::upset(
+  up_reg_degs_upsetdata,
+  order.by = "freq",
+  nsets = length(up_reg_degs),
+  sets.bar.color = "red",
+  main.bar.color = "red",
+  text.scale = 5
+)
+
+down_reg_degs_upsetdata <- UpSetR::fromList(down_reg_degs)
+UpSetR::upset(
+  down_reg_degs_upsetdata,
+  order.by = "freq",
+  nsets = length(down_reg_degs),
+  sets.bar.color = "blue",
+  main.bar.color = "blue",
+  text.scale = 5
+)
+```
+
+```{r}
+#Venn Diagram of the Plots
+all_degs_upsetdata <- UpSetR::fromList(all_degs)
+upset(
+  all_degs_upsetdata,
+  order.by = "freq"
+)
+
+ggvenn(all_degs[names(all_degs) != "Integrated"],
+       show_percentage = FALSE,
+   text_size = 5)
+
+#Finding the most frequencted DEGS for all Dataset
+core_genes <- Reduce(intersect, all_degs)
+
+length(core_genes)
+head(core_genes)
+
+gene_freq <- table(unlist(all_degs))
+
+shared_5plus <- names(gene_freq[gene_freq >= 5])
+length(shared_5plus)
+```
+
+```{r}
+
+initial_table <- covid19_dsint
+
+table_list <- covid19_ds124_analysis$filtered_results$`healthy-covid19`[covid19_ds124_analysis$filtered_results$`healthy-covid19`$geneid %in% core_genes, ]
+
+table_list <- list(table_list)
+names(table_list) <- 'healthy-covid19'
+```
+
+```{r}
+heatmap_function(initial_table, table_list)
+```
+
+ORA DEG consolidation
+
+```{r}
+#Dataset1 DEG Unpacking
+#DEGs of this specific terms unpacked for this dataset
+ds1_ora_t1 <- covid19_ds1_analysis$unpacked_results_down$`healthy-covid19`$`immunoglobulin mediated immune response`
+
+ds1_ora_t2 <- covid19_ds1_analysis$unpacked_results_down$`healthy-covid19`$`B cell mediated immunity`
+
+ds1_ora_t3 <- covid19_ds1_analysis$unpacked_results_down$`healthy-covid19`$`antibacterial humoral response`
+
+
+#Dataset2 DEG unpacking
+ds2_ora_t1 <- covid19_ds2_analysis$unpacked_results_down$`healthy-covid19`$`defense response to virus`
+
+#Dataset3 DEG unpacking
+ds3_ora_t1 <- covid19_ds3_analysis$unpacked_results_down$`healthy-covid19`$`B cell mediated immunity`
+
+ds3_ora_t2 <- covid19_ds3_analysis$unpacked_results_down$`healthy-covid19`$`immunoglobulin mediated immune response`
+
+
+#Dataset5 DEG unpacking
+ds5_ora_t1 <- covid19_ds5_analysis$unpacked_results_down$`healthy-covid19`$`immunoglobulin mediated immune response`
+
+ds5_ora_t2 <- covid19_ds5_analysis$unpacked_results_down$`healthy-covid19`$`B cell mediated immunity`
+
+
+ora_gene_lists <- list(
+  ds1_ora_t1 = ds1_ora_t1$geneid,
+  ds1_ora_t2 = ds1_ora_t2$geneid,
+  ds1_ora_t3 = ds1_ora_t3$geneid,
+  ds2_ora_t1 = ds2_ora_t1$geneid,
+  ds3_ora_t1 = ds3_ora_t1$geneid,
+  ds3_ora_t2 = ds3_ora_t2$geneid,
+  ds5_ora_t1 = ds5_ora_t1$geneid,
+  ds5_ora_t2 = ds5_ora_t2$geneid
+)
+
+ora_upset_data <- UpSetR::fromList(ora_gene_lists)
+
+upset(
+  ora_upset_data,
+  nsets = 8,
+  nintersects = 100,
+  order.by = "freq"
+)
+
+library(ComplexHeatmap)
+
+library(tidyverse)
+
+intersection_assignments <- ora_gene_lists %>%
+  enframe(name = "set", value = "geneid") %>%
+  unnest(geneid) %>%
+  group_by(geneid) %>%
+  summarize(Intersection = paste(sort(set), collapse = " & "))
+
+# Split into a clean list of genes per intersection group
+genes_by_intersection <- split(intersection_assignments$geneid, intersection_assignments$Intersection)
+
+genes_by_intersection
+```
+
+If we consolidated all the DEGs that were aligned under immunological over-represented terms.
+
+```{r}
+df_ora_filtered <- unique(bind_rows(
+  ds1_ora_t1,
+  ds1_ora_t2,
+  ds1_ora_t3,
+  ds2_ora_t1,
+  ds3_ora_t1,
+  ds3_ora_t2,
+  ds5_ora_t1,
+  ds5_ora_t2
+), by = "gene_id")
+df_ora_filtered <- list(df_ora_filtered)
+names(df_ora_filtered) <- 'healthy-covid19'
+
+
+heatmap_function(covid19_ds1, df_ora_filtered) #112 DEGs
+heatmap_function(covid19_ds2, df_ora_filtered)
+heatmap_function(covid19_ds3, df_ora_filtered)
+heatmap_function(covid19_ds5, df_ora_filtered)
+heatmap_function(covid19_dsint, df_ora_filtered)
+```
+
+```{r}
+#DownRegulated ORA Terms within the healthy-covid19
+covid19_ds1_analysis$ora_down_raw$enrichgo_visuals$`healthy-covid19`$ora_pvalue_ranked
+covid19_ds2_analysis$ora_down_raw$enrichgo_visuals$`healthy-covid19`$ora_pvalue_ranked
+covid19_ds3_analysis$ora_down_raw$enrichgo_visuals$`healthy-covid19`$ora_pvalue_ranked
+covid19_ds5_analysis$ora_down_raw$enrichgo_visuals$`healthy-covid19`$ora_pvalue_ranked
+covid19_ds124_analysis$ora_down_raw$enrichgo_visuals$`healthy-covid19`$ora_pvalue_ranked
+
+#UpRegulated ORA Terms within the healthy-covid19
+covid19_ds1_analysis$ora_up_raw$enrichgo_visuals$`healthy-covid19`$ora_pvalue_ranked
+covid19_ds2_analysis$ora_up_raw$enrichgo_visuals$`healthy-covid19`$ora_pvalue_ranked
+covid19_ds3_analysis$ora_up_raw$enrichgo_visuals$`healthy-covid19`$ora_pvalue_ranked
+covid19_ds5_analysis$ora_up_raw$enrichgo_visuals$`healthy-covid19`$ora_pvalue_ranked
+covid19_ds124_analysis$ora_up_raw$enrichgo_visuals$`healthy-covid19`$ora_pvalue_ranked
+```
+
+```{r}
+covid19_ds124_analysis$unpacked_results_up$`healthy-covid19`$`T cell differentiation`$geneid
+```
+
+Dissecting what DEGs makeupm those ORAs
+
+```{r}
+covid19_ds2_analysis$unpacked_results_down$`healthy-covid19`$
+
+```
