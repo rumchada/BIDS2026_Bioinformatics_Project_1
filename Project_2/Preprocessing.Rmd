@@ -4,6 +4,17 @@ output: html_document
 ---
 
 ```{r}
+library(TCGAbiolinks)
 
+
+query <- GDCquery(
+  project = "TCGA-PRAD",
+  data.category = "Transcriptome Profiling",
+  data.type = "Gene Expression Quantification",
+  workflow.type = "STAR - Counts"
+)
+```
+```{r}
+query
 ```
 
