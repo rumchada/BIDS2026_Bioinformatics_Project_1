@@ -1,0 +1,515 @@
+---
+title: "Intra_Differential_Expression"
+output:
+  pdf_document: default
+  html_document: default
+---
+
+# Read-In Libraries
+
+```{r}
+start.time <- Sys.time()
+```
+
+```{r, include =FALSE}
+library(tidyverse)
+library(glue)
+library(devtools)
+library(vroom)
+library(GEOquery)
+library(biomaRt)
+library(dplyr)
+library(org.Hs.eg.db)
+library(DESeq2)
+library(clusterProfiler)
+library(RNAseqQC)
+library(edgeR)
+source("Project_1_function_lab.R")
+```
+
+```{r}
+covid19_ds1 <- readRDS("./post_processed_data/gse202805_covid19_ds1.rds")
+covid19_ds2 <- readRDS("./post_processed_data/gse152641_covid19_ds2.rds")
+covid19_ds3 <- readRDS("./post_processed_data/gse161731_covid19_ds3.rds")
+covid19_ds4 <- readRDS("./post_processed_data/gse227116_covid19_ds4.rds")
+covid19_ds5 <- readRDS("./post_processed_data/gse152418_covid19_ds5.rds")
+
+covid19_dsint <- readRDS("./post_processed_data/covid_dds_12345.rds")
+
+
+# Adding DataSet Moniceurs
+colData(covid19_ds1)$ds_origin <- "GSE202805"
+colData(covid19_ds2)$ds_origin <- "GSE152641"
+colData(covid19_ds3)$ds_origin <- "GSE161731"
+colData(covid19_ds4)$ds_origin <- "GSE227116"
+colData(covid19_ds5)$ds_origin <- "GSE152418"
+```
+
+```{r}
+covid19_ds1@colData$condition <- covid19_ds1@colData$condition %>% tolower()
+covid19_ds2@colData$condition <- covid19_ds2@colData$condition %>% tolower()
+covid19_ds3@colData$condition <- covid19_ds3@colData$condition %>% tolower() %>% gsub("-", "",.) %>% as.factor()
+
+covid19_ds4@colData$condition <- covid19_ds4@colData$condition %>% tolower()
+
+covid19_ds5@colData$condition <- covid19_ds5@colData$condition %>% tolower() %>% gsub("-", "",.)
+```
+
+```{r}
+levels(covid19_ds3@colData$condition)
+```
+
+<https://olvtools.com/en/documents/edger>
+
+# Part2_Project 1 Intra Diffferential Expression of the DataSets
+
+### Perform EdgeR Differential Expression and plot a volcano plot for each condition comparison within the DDS object
+
+```{r}
+
+#Arguments
+dds_object <- covid19_ds1
+condition_col = "condition"
+ref_group_name = "healthy"
+
+
+#Performs inital differential expression on your DDS Object's raw counts dataframe
+# The use give the condition column from the metadata to make the test parameters
+# and the control group
+results_dds1 <- edgeR_diffexp(covid19_ds1, condition_col,  ref_group_name)
+results_dds2 <- edgeR_diffexp(covid19_ds2, condition_col, ref_group_name)
+results_dds3 <- edgeR_diffexp(covid19_ds3, condition_col, ref_group_name)
+results_dds4 <- edgeR_diffexp(covid19_ds4, condition_col, ref_group_name)
+results_dds5 <- edgeR_diffexp(covid19_ds5, condition_col, ref_group_name)
+```
+
+# **Covid-19 DS1 GSE202805 Downstream Analaysis**
+
+```{r, include=FALSE}
+
+covid19_ds1_analysis <- run_de_pipeline(
+                                        covid19_ds1, 
+                                        results_dds1,
+                                        deg_log2fc_thresh = 1, 
+                                        deg_pval_adj_thresh = 0.05, 
+                                        vol_plot_lower_xlim = -10, 
+                                        vol_plot_upper_xlim = 10, 
+                                        cartesian_step = 5, 
+                                        ora_pval_adj_threshold = 0.05)
+#saveRDS(covid19_ds1_analysis, "./downstream_results/covid_ds1_gse202805")
+```
+
+### **Covid-19 DS1 GSE202805 significant DEGs abs(log2fc) \> 1 and pval_adj \< 0.05**
+
+**healthy-convalalescent: \# DEGs total = 114**
+
+Upregulated: 19
+
+Down Regulated: 95
+
+**Healthy-covid19: #DEGs total = 295**
+
+UpRegulated: 61
+
+Downregulated: 234
+
+Convalescent-covid19: \# DEGs total = 1408
+
+Upregulated: 535 Sig up
+
+Downregulated: 87
+
+### Displaying All the Results
+
+```{r}
+covid19_ds1_analysis$volcano_plots
+covid19_ds1_analysis$heatmap
+covid19_ds1_analysis$ora_down_raw$enrichgo_visuals
+covid19_ds1_analysis$ora_up_raw$enrichgo_visuals
+```
+
+# **Covid-19 DS2 GSE**152641 **Downstream Analysis**
+
+```{r}
+covid19_ds2_analysis <- run_de_pipeline(covid19_ds2, 
+                                        results_dds2,
+                                        deg_log2fc_thresh = 1, 
+                                        deg_pval_adj_thresh = 0.05, 
+                                        vol_plot_lower_xlim = -10, 
+                                        vol_plot_upper_xlim = 10, 
+                                        cartesian_step = 5, 
+                                        ora_pval_adj_threshold = 0.05)
+```
+
+```{r}
+#saveRDS(covid19_ds1_analysis, "./downstream_results/covid_ds2_gse152641")
+```
+
+### Covid-19 DS2 GSE152641 **significant DEGs abs(log2fc) \> 1 and pval_adj \< 0.05**
+
+**Healthy-covid19: #DEGs total = 591**
+
+**UpRegulated: 112 sig up**
+
+**Downregulated: 479 sig down**
+
+### Displaying All the Results
+
+```{r}
+covid19_ds2_analysis$volcano_plots
+covid19_ds2_analysis$heatmap
+covid19_ds2_analysis$ora_down_raw$enrichgo_visuals
+covid19_ds2_analysis$ora_up_raw$enrichgo_visuals
+```
+
+# Covid19- DS3 GSE161731 Downstream Analysis
+
+```{r}
+covid19_ds3_analysis <- run_de_pipeline(covid19_ds3, 
+                                        results_dds3,
+                                        deg_log2fc_thresh = 1, 
+                                        deg_pval_adj_thresh = 0.05, 
+                                        vol_plot_lower_xlim = -10, 
+                                        vol_plot_upper_xlim = 10, 
+                                        cartesian_step = 5, 
+                                        ora_pval_adj_threshold = 0.5)
+```
+
+# **Covid-19 DS4 GSE**227116 **Downstream Analaysis**
+
+```{r, include=FALSE}
+covid19_ds4_analysis <- run_de_pipeline(covid19_ds4, 
+                                        results_dds4,
+                                        deg_log2fc_thresh = 1, 
+                                        deg_pval_adj_thresh = 0.05, 
+                                        vol_plot_lower_xlim = -10, 
+                                        vol_plot_upper_xlim = 10, 
+                                        cartesian_step = 5, 
+                                        ora_pval_adj_threshold = 0.5)
+```
+
+```{r}
+#saveRDS(covid19_ds2_analysis, "./downstream_results/covid_ds4_gse227116")
+```
+
+```{r}
+
+```
+
+### Displaying All the Results
+
+```{r}
+covid19_ds4_analysis$volcano_plots
+covid19_ds4_analysis$heatmap
+covid19_ds4_analysis$ora_down_raw$enrichgo_visuals
+covid19_ds4_analysis$ora_up_raw$enrichgo_visuals
+
+```
+
+### Significant DEGs
+
+**Covid-19 DS4 GSE227226 significant DEGs abs(log2fc) \> 1 and pval_adj \< 0.05**
+
+**healthy vs convascent: total DEGs: 111**
+
+**24 sig up, 87 sig down**
+
+Over_Representated Pathways
+
+Observation: There are Barely any over-represented pathways after inputting the 111 DEGs into enrichGO. This is consistent for both the pval threshold at 0.05 for both up and down regulated DEGs as input.
+
+# Covid-19 DS5 GSE152418 Downstream Analysis
+
+```{r}
+covid19_ds5_analysis <- run_de_pipeline(covid19_ds5, 
+                                        results_dds5,
+                                        deg_log2fc_thresh = 1, 
+                                        deg_pval_adj_thresh = 0.05, 
+                                        vol_plot_lower_xlim = -10, 
+                                        vol_plot_upper_xlim = 10, 
+                                        cartesian_step = 5, 
+                                        ora_pval_adj_threshold = 0.5)
+```
+
+### Dispalying Results
+
+```{r}
+covid19_ds5_analysis$volcano_plots
+covid19_ds5_analysis$heatmap
+
+```
+
+# Integrated Covid Dataset (**GSE202805 + GSE**227116 + **GSE**152641) Downstreamt Analysis
+
+```{r}
+covid19_dsint <- readRDS("./post_processed_data/covid_dds_12345.rds")
+```
+
+```{r}
+disease_states <- c(levels(covid19_dsint$condition))
+
+comb = function(n, x) {
+  factorial(n) / factorial(n-x) / factorial(x)
+}
+
+comb(length(disease_states), 2)
+```
+
+```{r, include =FASLE}
+unique(covid19_dsint@colData$condition)
+dds_object <- covid19_dsint 
+condition_col = "condition"
+ref_group_name = "healthy"
+results_ddsint <- edgeR_diffexp(covid19_dsint,
+                                condition_col,
+                                ref_group_name)
+
+covid19_ds124_analysis <- run_de_pipeline(covid19_dsint, 
+                                        results_ddsint,
+                                        deg_log2fc_thresh = 1, 
+                                        deg_pval_adj_thresh = 0.05, 
+                                        vol_plot_lower_xlim = -20, 
+                                        vol_plot_upper_xlim = 20, 
+                                        cartesian_step = 5, 
+                                        ora_pval_adj_threshold = 0.05)
+```
+
+```{r}
+#saveRDS(covid19_ds124_analysis, "./downstream_results/covid_ds124_integrated")
+```
+
+```{r}
+if(!dir.exists("downstream_results")) dir.create("downstream_results", recursive = TRUE)
+
+save(
+  covid19_ds1_analysis,
+  file = "./downstream_results/covid19_ds1_analysis.RData",
+  compress = "gzip"
+)
+
+save(
+  covid19_ds2_analysis,
+  file = "./downstream_results/covid19_ds2_analysis.RData",
+  compress = "gzip"
+)
+
+save(
+  covid19_ds3_analysis,
+  file = "./downstream_results/covid19_ds3_analysis.RData",
+  compress = "gzip"
+)
+
+save(
+  covid19_ds4_analysis,
+  file = "./downstream_results/covid19_ds4_analysis.RData",
+  compress = "gzip"
+)
+
+save(
+  covid19_ds5_analysis,
+  file = "./downstream_results/covid19_ds5_analysis.RData",
+  compress = "gzip"
+)
+
+save(
+  covid19_ds124_analysis,
+  file = "./downstream_results/covid_ds12345_integrated.RData",
+  compress = "gzip"
+)
+```
+
+### Displaying Results
+
+```{r}
+end.time <- Sys.time()
+time.taken <- end.time - start.time
+time.taken
+```
+
+```{r}
+covid19_ds124_analysis$volcano_plots
+covid19_ds124_analysis$heatmap
+covid19_ds124_analysis$ora_down_raw$enrichgo_visuals
+#covid19_ds124_analysis$ora_up_raw$enrichgo_visuals
+```
+
+```{r}
+heatmap_visuals_124
+
+heatmap_folder <- "heatmap_images"
+
+
+if(!dir.exists(heatmap_folder)) dir.create(heatmap_folder, recursive = TRUE)
+
+
+for(h in seq_along(heatmap_visuals_124)){
+gg_patchwork(heatmap_visuals_124[[h]], 
+             glue("{heatmap_folder}/{names(heatmap_visuals_124)[h]}.png"),
+             width = 10,
+             height = 20)
+}
+```
+
+# Meta-Analysis
+
+### DEG Meta-Analysis
+
+```{r}
+library(ggvenn)
+```
+
+```{r}
+deg_results_list <- list(
+  ds1 = covid19_ds1_analysis$filtered_results,
+  ds2 = covid19_ds2_analysis$filtered_results,
+  ds4 = covid19_ds4_analysis$filtered_results,
+  int_ds = covid19_ds124_analysis$filtered_results
+)
+
+# initialize output list
+all_degs <- vector("list", length(deg_results_list))
+names(all_degs) <- c("GSE202805", "GSE152641", "GSE227116", "Integrated")
+
+# loop through each dataset
+for (j in seq_along(deg_results_list)) {
+  
+  current_dataset <- deg_results_list[[j]]
+  current_genes <- c()
+  
+  # loop through each DEG table in the dataset
+  for (i in seq_along(current_dataset)) {
+    
+    current_genes <- c(
+      current_genes,
+      current_dataset[[i]]$geneid
+    )
+  }
+  
+  # optionally remove duplicates
+  all_degs[[j]] <- unique(current_genes)
+}
+ggvenn(all_degs)
+```
+
+There is an overall large heterogeneous mixture of DEGs between the three individual data-sets and the batch corrected, integrated data-set. A majority of the DEGs reside within their parent data-set and remain exclusive to their internal comparisons. The Integrated Dataset does share at least 150 DEGs with GSE152641 (GSE152641 U Integrated nDEGs = 196), and GSE202805 (GSE202805 U Integrated = 153), where the three held 172 DEGs (GSE202805 U GSE152641 U Integrated nDEGs = 172). However the integrated dataset does not share many DEGs (nDEGs\<20) with GSE227116.
+
+### OverRepresented Pathways Meta-Analysis
+
+```{r}
+ora_desc_collapse_fxn <- function(unpacked_results){
+  ora_desc_list <- vector("list", length(unpacked_ora_results_ds1))
+  names(ora_desc_list) <- names(unpacked_ora_results_ds1)
+  
+  for(i in seq_along(unpacked_ora_results_ds1)) {
+    
+    # for each comparison within the unpacked results
+    current_comparison <- unpacked_ora_results_ds1[[i]]
+    
+    ora_descriptions <- c()
+    
+    # for each table within that specific comparison
+    for(j in seq_along(current_comparison)) {
+      
+      ora_descriptions <- c(
+        ora_descriptions,
+        current_comparison[[j]]$gene_desc.x
+      )
+    }
+    
+    ora_desc_list[[i]] <- unique(ora_descriptions)
+  }
+  return(ora_desc_list)
+}
+```
+
+```{r}
+upreg_unpacked_ora_ds1 <- covid19_ds1_analysis$unpacked_results_up
+downreg_unpacked_ora_ds1 <- covid19_ds1_analysis$unpacked_results_down
+
+covid19_ds1_summarized_ora_terms <- list("up" = ora_desc_collapse_fxn(upreg_unpacked_ora_ds1),
+                                   "down" = ora_desc_collapse_fxn(downreg_unpacked_ora_ds1)) %>% unlist()
+                                   
+                                  
+upreg_unpacked_ora_ds2 <- covid19_ds2_analysis$unpacked_results_up
+downreg_unpacked_ora_ds2 <- covid19_ds2_analysis$unpacked_results_down                      
+
+
+covid19_ds2_summarized_ora_terms <- list("up" = ora_desc_collapse_fxn(upreg_unpacked_ora_ds2),
+                                   "down" = ora_desc_collapse_fxn(downreg_unpacked_ora_ds2)) %>% unlist()
+
+
+upreg_unpacked_ora_ds4 <- covid19_ds4_analysis$unpacked_results_up
+downreg_unpacked_ora_ds4 <- covid19_ds4_analysis$unpacked_results_down                      
+
+
+covid19_ds4_summarized_ora_terms <- list("up" = ora_desc_collapse_fxn(upreg_unpacked_ora_ds4),
+                                   "down" = ora_desc_collapse_fxn(downreg_unpacked_ora_ds4)) %>% unlist()
+
+upreg_unpacked_ora_ds124 <- covid19_ds124_analysis$unpacked_results_up
+downreg_unpacked_ora_ds124 <- covid19_ds124_analysis$unpacked_results_down                      
+
+
+covid19_ds124_summarized_ora_terms <- list("up" = ora_desc_collapse_fxn(upreg_unpacked_ora_ds124),
+                                   "down" = ora_desc_collapse_fxn(downreg_unpacked_ora_ds124)) %>% unlist()
+```
+
+```{r}
+all_ora_terms <- list("GSE202805" = covid19_ds1_summarized_ora_terms , 
+                      "GSE152641" = covid19_ds2_summarized_ora_terms, 
+                      "GSE227116" = covid19_ds4_summarized_ora_terms, 
+                      "Integrated" = covid19_ds124_summarized_ora_terms)
+ggvenn(all_ora_terms)
+```
+
+# DEGs from OverRepresented Pathways analysis Heatmap
+
+# Healthy vs COVID-19 Comparisons
+
+Covid-19 Dataset 1 (GSE202805) top over-represented pathways by p-values of hypergeometric test
+
+```{r}
+df1_ds1 <- covid19_ds1_analysis$unpacked_results_down$`healthy-covid19`$`immunoglobulin mediated immune response`
+df2_ds1 <- covid19_ds1_analysis$unpacked_results_down$`healthy-covid19`$`B cell mediated immunity`
+df3_ds1 <- covid19_ds1_analysis$unpacked_results_down$`healthy-covid19`$`antibacterial humoral response`
+df4_ds1 <- covid19_ds1_analysis$unpacked_results_down$`healthy-covid19`$`mucosal immune response`
+df5_ds1 <- covid19_ds1_analysis$unpacked_results_down$`healthy-covid19`$`antimicrobial humoral response`
+
+df_ora_filtered <- unique(bind_rows(df1_ds1, df2_ds1, df3_ds1, df4_ds1, df5_ds1), by = "gene_id")
+
+
+df_ora_filtered <- list(df_ora_filtered)
+names(df_ora_filtered) <- 'healthy-covid19'
+
+
+heatmap_function(dds_object, df_ora_filtered)
+```
+
+Covid-19 Dataset 2 (GSE152641) top over-represented pathways by p-values of hypergeometric test
+
+```{r, include=FALSE}
+df1_ds2 <- unpacked_results_down$`Healthy-COVID19`$`defense response to virus`
+df1_ds2_ora_filtered <- unique(bind_rows(df1_ds2), by = "gene_id")
+
+df1_ds2_ora_filtered <- list(df1_ds2_ora_filtered)
+names(df1_ds2_ora_filtered) <- 'Healthy-COVID19'
+
+image <- heatmap_function(dds_object, df1_ds2_ora_filtered)
+```
+
+```{r}
+image
+```
+
+```{r}
+table(colnames(expr)[matching_cols])
+length(unique(colnames(expr)[matching_cols]))
+ncol(expr)
+```
+
+# Healthy vs Convalescent Comparisons
+
+(per Dataset)
+
+# Covid-19 vs Convalescent Comparison
+
+(per Dataset)
