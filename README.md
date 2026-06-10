@@ -3,7 +3,7 @@ Project 1 Abstract
 Title: An Exploratory Analysis to Assess reproducibility of COVID-19 bulk RNA-seq Datasets
 
 
-Authors: Geordan Bolden, M.S. , Dr. Cristina Mitrea
+Authors: Geordan Bolden, M.S.
 
 
 Abstract
