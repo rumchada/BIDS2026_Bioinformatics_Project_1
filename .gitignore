@@ -3,37 +3,51 @@ GSE*/
 *.gz
 *.tar
 *.fastq
+*.fastq.gz
 *.fq
+*.fq.gz
 *.bam
 *.sam
+*.cram
+*.bai
+*.csi
 
-# Expression matrices
-*.h5ad
-*.loom
-*.rds
+# Genomics formats
+*.vcf
+*.vcf.gz
+*.bcf
+*.bed
+*.bw
+*.bigWig
 
 # Results folders
 results/
 output/
 downstream_results/
 post_processed_data/
+Project_2/GDCdata/
+Project_1/downstream_results/*.RData
+
 
 # R / Python junk
 .Rhistory
 .RData
 .Rproj.user/
 __pycache__/
+.ipynb_checkpoints/
 *.pyc
+*.log
+*.tmp
+*.temp
+*.rds
+
 
 #images
 .png
 .jpeg
 .pdf
 
-
 # macOS
 .DS_Store
-EOF
 
-Project_1/downstream_results/
-*.RData
+EOF
